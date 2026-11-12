@@ -490,9 +490,119 @@ edges: [
 };
 
 // ============================================================================
-// 2. ERA DEFINITIONS & COLOR UTILITIES
+// 2. TYPES, ERA DEFINITIONS & COLOR UTILITIES
 // ============================================================================
-const ERA_BUCKETS = [
+interface RawNodeInput {
+  id?: string;
+  label?: string;
+  title?: string;
+  origin_raw?: string;
+  year?: number | string | null;
+  motifs?: string | string[];
+  colours?: string | string[];
+  platform?: string | string[];
+  location?: string;
+  image?: string;
+  url?: string;
+  pagerank?: number;
+  tier?: number;
+  subgenres?: string[];
+  related?: string[];
+  overlaps?: string[];
+}
+
+interface RawEdgeInput {
+  source?: string;
+  target?: string;
+  type?: string;
+}
+
+interface RawDatasetObject {
+  stats?: { nodes: number; edges: number };
+  nodes?: RawNodeInput[];
+  edges?: RawEdgeInput[];
+}
+
+type RawDatasetInput = RawDatasetObject | RawNodeInput[];
+
+interface NormalizedNode {
+  id: string;
+  label: string;
+  origin_raw: string;
+  year: number | null;
+  eraId: string;
+  eraColor: string;
+  motifs: string;
+  colours: string;
+  platform: string;
+  location: string;
+  image: string;
+  url: string;
+  parents: string[];
+  children: string[];
+  peers: string[];
+  degree: number;
+  pagerank: number;
+  tier: number;
+}
+
+interface GraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  kind: 'subgenre' | 'chronological' | 'overlap';
+}
+
+interface PositionedNode extends NormalizedNode {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  dotRadius: number;
+  degText: string;
+  badgeW: number;
+  truncatedLabel: string;
+  truncatedLabelThumb: string;
+  labelWidth: number;
+}
+
+interface LayoutEdge extends GraphEdge {
+  path: Path2D;
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  sourceTier: number;
+  targetTier: number;
+}
+
+interface Swimlane {
+  id: string;
+  label: string;
+  color: string;
+  count: number;
+  top: number;
+  bottom: number;
+  height: number;
+}
+
+interface CachedImageEntry {
+  status: 'loading' | 'loaded' | 'error';
+  img: HTMLImageElement;
+}
+
+interface ToastState {
+  message: string;
+  type: 'info' | 'success' | 'error';
+}
+
+const ERA_BUCKETS: Array<{
+  id: string;
+  label: string;
+  minYear: number | null;
+  maxYear: number | null;
+  color: string;
+}> = [
   { id: 'Pre-1900', label: 'Pre-1900', minYear: -Infinity, maxYear: 1899, color: '#d97706' },
   { id: '1900s', label: '1900s', minYear: 1900, maxYear: 1909, color: '#eab308' },
   { id: '1910s', label: '1910s', minYear: 1910, maxYear: 1919, color: '#84cc16' },
@@ -510,10 +620,12 @@ const ERA_BUCKETS = [
   { id: 'Undated', label: 'Undated', minYear: null, maxYear: null, color: '#64748b' },
 ];
 
-const ERA_COLOR_MAP = Object.fromEntries(ERA_BUCKETS.map((b) => [b.id, b.color]));
+const ERA_COLOR_MAP: Record<string, string> = Object.fromEntries(
+  ERA_BUCKETS.map((b) => [b.id, b.color])
+);
 
-function getEraBucketId(year) {
-  if (year === null || year === undefined || Number.isNaN(Number(year))) {
+function getEraBucketId(year: number | string | null | undefined): string {
+  if (year === null || year === undefined || year === '' || !Number.isFinite(Number(year))) {
     return 'Undated';
   }
   const y = Number(year);
@@ -523,8 +635,26 @@ function getEraBucketId(year) {
   return `${decade}s`;
 }
 
+/**
+ * Computes progressive-disclosure opacity for a node based on its PageRank tier (1-4)
+ * and the current camera zoom scale `k`. Nodes in an active hovered, selected,
+ * or searched lineage always bypass culling (`isBypassed = true` -> 1.0).
+ */
+function getNodeTierAlpha(tier: number, k: number, isBypassed: boolean): number {
+  if (isBypassed || tier <= 2) return 1;
+  if (tier === 3) {
+    if (k < 0.4) return 0;
+    if (k < 0.6) return (k - 0.4) / 0.2;
+    return 1;
+  }
+  // Tier 4 (bottom 50% micro-aesthetics)
+  if (k < 0.65) return 0;
+  if (k < 0.85) return (k - 0.65) / 0.2;
+  return 1;
+}
+
 // Parse human-readable colour names or hex strings into visual swatches
-const NAMED_COLORS = {
+const NAMED_COLORS: Record<string, string> = {
   black: '#111827',
   white: '#f8fafc',
   grey: '#6b7280',
@@ -594,14 +724,14 @@ const NAMED_COLORS = {
   'warm white': '#fafaf9',
 };
 
-function parseColourSwatches(coloursStr) {
+function parseColourSwatches(coloursStr: string | null | undefined): Array<{ label: string; hex: string }> {
   if (!coloursStr || typeof coloursStr !== 'string') return [];
   const tokens = coloursStr
     .split(/[,;/•|\n]+/)
     .map((t) => t.trim())
     .filter(Boolean);
 
-  const swatches = [];
+  const swatches: Array<{ label: string; hex: string }> = [];
   for (const token of tokens) {
     const clean = token.replace(/\(.*?\)/g, '').trim();
     const lower = clean.toLowerCase();
@@ -620,26 +750,28 @@ function parseColourSwatches(coloursStr) {
     }
 
     // Partial keyword fallback
-  const matchedKey = Object.keys(NAMED_COLORS).find((k) => lower.includes(k));
-  if (matchedKey) {
-    swatches.push({ label: clean, hex: NAMED_COLORS[matchedKey] });
+    const matchedKey = Object.keys(NAMED_COLORS).find((k) => lower.includes(k));
+    if (matchedKey) {
+      swatches.push({ label: clean, hex: NAMED_COLORS[matchedKey] });
+    }
   }
-}
-return swatches.slice(0, 10);
+  return swatches.slice(0, 10);
 }
 
 // ============================================================================
 // 3. DATA NORMALIZATION (Supports { nodes, edges } OR Flat Node Array)
 // ============================================================================
-function normalizeGraphDataset(rawJson) {
-  const rawNodes = Array.isArray(rawJson)
+function normalizeGraphDataset(rawJson: RawDatasetInput) {
+  const rawNodes: RawNodeInput[] = Array.isArray(rawJson)
     ? rawJson
     : Array.isArray(rawJson?.nodes)
     ? rawJson.nodes
     : [];
-  const rawEdges = Array.isArray(rawJson?.edges) ? rawJson.edges : [];
+  const rawEdges: RawEdgeInput[] = !Array.isArray(rawJson) && Array.isArray(rawJson?.edges) ? rawJson.edges : [];
 
-  const nodeMap = new Map();
+  const nodeMap = new Map<string, NormalizedNode>();
+  let hasExplicitTiers = true;
+
   for (const item of rawNodes) {
     if (!item) continue;
     const rawId = item.id ?? item.label ?? item.title;
@@ -647,19 +779,26 @@ function normalizeGraphDataset(rawJson) {
     const id = String(rawId).trim();
     if (!id || nodeMap.has(id)) continue;
 
-    let parsedYear = null;
-    if (item.year !== null && item.year !== undefined && item.year !== '' && !Number.isNaN(Number(item.year))) {
+    let parsedYear: number | null = null;
+    if (item.year !== null && item.year !== undefined && item.year !== '' && Number.isFinite(Number(item.year))) {
       parsedYear = Number(item.year);
     } else if (typeof item.origin_raw === 'string') {
       const m = item.origin_raw.match(/(1[6-9]\d{2}|20[0-2]\d)/);
-      if (m) parsedYear = Number(m[1]);
+      if (m && Number.isFinite(Number(m[1]))) parsedYear = Number(m[1]);
     }
+
+    const rawPr = Number(item.pagerank);
+    const validPr = Number.isFinite(rawPr) && rawPr > 0 ? rawPr : 0;
+
+    const rawTier = Number(item.tier);
+    const validTier = rawTier === 1 || rawTier === 2 || rawTier === 3 || rawTier === 4 ? rawTier : 0;
+    if (validTier === 0) hasExplicitTiers = false;
 
     const eraId = getEraBucketId(parsedYear);
     nodeMap.set(id, {
       id,
       label: String(item.label || item.title || id),
-      origin_raw: item.origin_raw || (parsedYear ? `${parsedYear}` : 'Unknown Era'),
+      origin_raw: item.origin_raw || (parsedYear !== null ? `${parsedYear}` : 'Unknown Era'),
       year: parsedYear,
       eraId,
       eraColor: ERA_COLOR_MAP[eraId] || '#64748b',
@@ -673,11 +812,13 @@ function normalizeGraphDataset(rawJson) {
       children: [],
       peers: [],
       degree: 0,
+      pagerank: validPr,
+      tier: validTier || 4,
     });
   }
 
   // Build unified edge list from explicit edges array OR inline node arrays
-  const combinedRawEdges = [...rawEdges];
+  const combinedRawEdges: RawEdgeInput[] = [...rawEdges];
   if (rawEdges.length === 0) {
     for (const item of rawNodes) {
       const src = item?.id ?? item?.label ?? item?.title;
@@ -694,10 +835,10 @@ function normalizeGraphDataset(rawJson) {
     }
   }
 
-  const directedEdges = [];
-  const peerEdges = [];
-  const seenDirected = new Set();
-  const seenPeers = new Set();
+  const directedEdges: GraphEdge[] = [];
+  const peerEdges: GraphEdge[] = [];
+  const seenDirected = new Set<string>();
+  const seenPeers = new Set<string>();
 
   for (const edge of combinedRawEdges) {
     if (!edge || !edge.source || !edge.target) continue;
@@ -722,7 +863,7 @@ function normalizeGraphDataset(rawJson) {
     } else if (rawType === 'related') {
       const yA = srcNode.year;
       const yB = tgtNode.year;
-      if (yA !== null && yB !== null && yA !== yB) {
+      if (yA !== null && yB !== null && Number.isFinite(yA) && Number.isFinite(yB) && yA !== yB) {
         const older = yA < yB ? srcNode : tgtNode;
         const newer = yA < yB ? tgtNode : srcNode;
         const key = `${older.id}->${newer.id}`;
@@ -752,13 +893,34 @@ function normalizeGraphDataset(rawJson) {
     }
   }
 
-  for (const node of nodeMap.values()) {
+  const allNodes = Array.from(nodeMap.values());
+  let totalDegree = 0;
+  for (const node of allNodes) {
     node.degree = node.parents.length + node.children.length + node.peers.length;
+    totalDegree += Math.max(1, node.degree);
+  }
+
+  // Fallback PageRank/Tier assignment when loading untiered datasets (e.g. BUILTIN_DATASET)
+  if (!hasExplicitTiers && allNodes.length > 0) {
+    const sorted = [...allNodes].sort(
+      (a, b) => b.pagerank - a.pagerank || b.degree - a.degree || a.label.localeCompare(b.label)
+    );
+    const total = sorted.length;
+    sorted.forEach((node, idx) => {
+      const percentile = 1.0 - idx / total;
+      if (percentile >= 0.98) node.tier = 1;
+      else if (percentile >= 0.85) node.tier = 2;
+      else if (percentile >= 0.5) node.tier = 3;
+      else node.tier = 4;
+      if (!node.pagerank || !Number.isFinite(node.pagerank)) {
+        node.pagerank = Math.max(1, node.degree) / Math.max(1, totalDegree);
+      }
+    });
   }
 
   return {
     nodeMap,
-    nodes: Array.from(nodeMap.values()),
+    nodes: allNodes,
     directedEdges,
     peerEdges,
   };
@@ -769,8 +931,8 @@ function normalizeGraphDataset(rawJson) {
 // ============================================================================
 const SPATIAL_CELL_SIZE = 256;
 
-let sharedMeasureCtx = null;
-function getMeasureContext() {
+let sharedMeasureCtx: CanvasRenderingContext2D | null = null;
+function getMeasureContext(): CanvasRenderingContext2D | null {
   if (!sharedMeasureCtx && typeof document !== 'undefined') {
     const c = document.createElement('canvas');
     sharedMeasureCtx = c.getContext('2d');
@@ -778,47 +940,51 @@ function getMeasureContext() {
   return sharedMeasureCtx;
 }
 
-function buildCubicBezierPath(src, tgt) {
+function buildCubicBezierPath(src: { x: number; y: number }, tgt: { x: number; y: number }) {
   const path = new Path2D();
-  const dy = tgt.y - src.y;
-  const dx = tgt.x - src.x;
+  const sx = Number.isFinite(src.x) ? src.x : 0;
+  const sy = Number.isFinite(src.y) ? src.y : 0;
+  const tx = Number.isFinite(tgt.x) ? tgt.x : 0;
+  const ty = Number.isFinite(tgt.y) ? tgt.y : 0;
+  const dy = ty - sy;
+  const dx = tx - sx;
 
   if (Math.abs(dy) < 25) {
     const arcHeight = Math.min(75, Math.max(24, Math.abs(dx) * 0.18));
-    path.moveTo(src.x, src.y);
+    path.moveTo(sx, sy);
     path.bezierCurveTo(
-      src.x + dx * 0.25,
-      src.y - arcHeight,
-      tgt.x - dx * 0.25,
-      tgt.y - arcHeight,
-      tgt.x,
-      tgt.y
+      sx + dx * 0.25,
+      sy - arcHeight,
+      tx - dx * 0.25,
+      ty - arcHeight,
+      tx,
+      ty
     );
     return {
       path,
-      minX: Math.min(src.x, tgt.x) - 20,
-      maxX: Math.max(src.x, tgt.x) + 20,
-      minY: Math.min(src.y, tgt.y) - arcHeight - 10,
-      maxY: Math.max(src.y, tgt.y) + 20,
+      minX: Math.min(sx, tx) - 20,
+      maxX: Math.max(sx, tx) + 20,
+      minY: Math.min(sy, ty) - arcHeight - 10,
+      maxY: Math.max(sy, ty) + 20,
     };
   }
 
   const cpOffset = Math.abs(dy) * 0.48;
-  path.moveTo(src.x, src.y);
+  path.moveTo(sx, sy);
   path.bezierCurveTo(
-    src.x,
-    src.y + (dy > 0 ? cpOffset : -cpOffset),
-    tgt.x,
-    tgt.y - (dy > 0 ? cpOffset : -cpOffset),
-    tgt.x,
-    tgt.y
+    sx,
+    sy + (dy > 0 ? cpOffset : -cpOffset),
+    tx,
+    ty - (dy > 0 ? cpOffset : -cpOffset),
+    tx,
+    ty
   );
   return {
     path,
-    minX: Math.min(src.x, tgt.x) - 20,
-    maxX: Math.max(src.x, tgt.x) + 20,
-    minY: Math.min(src.y, tgt.y) - 20,
-    maxY: Math.max(src.y, tgt.y) + 20,
+    minX: Math.min(sx, tx) - 20,
+    maxX: Math.max(sx, tx) + 20,
+    minY: Math.min(sy, ty) - 20,
+    maxY: Math.max(sy, ty) + 20,
   };
 }
 
@@ -827,9 +993,14 @@ function buildCubicBezierPath(src, tgt) {
  * precomputes native Path2D curves for all visible edges, and builds an O(1)
  * 256x256 spatial hash grid for instantaneous pointer hit-testing.
  */
-function computeChronologicalLayout(visibleNodes, directedEdges, peerEdges, showUndated) {
+function computeChronologicalLayout(
+  visibleNodes: NormalizedNode[],
+  directedEdges: GraphEdge[],
+  peerEdges: GraphEdge[],
+  showUndated: boolean
+) {
   const activeSet = new Set(visibleNodes.map((n) => n.id));
-  const buckets = new Map();
+  const buckets = new Map<string, NormalizedNode[]>();
   for (const era of ERA_BUCKETS) {
     if (era.id === 'Undated' && !showUndated) continue;
     buckets.set(era.id, []);
@@ -841,15 +1012,20 @@ function computeChronologicalLayout(visibleNodes, directedEdges, peerEdges, show
     if (list) list.push(node);
   }
 
-  // Initial deterministic sort within each era: high-degree hubs near center
+  // Initial deterministic sort within each era: high-PageRank & high-degree hubs near center
   for (const [, list] of buckets) {
     list.sort((a, b) => {
-      const yA = a.year ?? 9999;
-      const yB = b.year ?? 9999;
+      const yA = a.year !== null && Number.isFinite(a.year) ? a.year : 9999;
+      const yB = b.year !== null && Number.isFinite(b.year) ? b.year : 9999;
       if (yA !== yB) return yA - yB;
-      return b.degree - a.degree || a.label.localeCompare(b.label);
+      return (
+        a.tier - b.tier ||
+        b.pagerank - a.pagerank ||
+        b.degree - a.degree ||
+        a.label.localeCompare(b.label)
+      );
     });
-    const centered = [];
+    const centered: NormalizedNode[] = [];
     list.forEach((item, idx) => {
       if (idx % 2 === 0) centered.push(item);
       else centered.unshift(item);
@@ -858,23 +1034,23 @@ function computeChronologicalLayout(visibleNodes, directedEdges, peerEdges, show
   }
 
   // Build adjacency for active nodes only
-  const neighborsMap = new Map();
+  const neighborsMap = new Map<string, string[]>();
   for (const n of visibleNodes) neighborsMap.set(n.id, []);
   for (const e of directedEdges) {
     if (activeSet.has(e.source) && activeSet.has(e.target)) {
-      neighborsMap.get(e.source).push(e.target);
-      neighborsMap.get(e.target).push(e.source);
+      neighborsMap.get(e.source)?.push(e.target);
+      neighborsMap.get(e.target)?.push(e.source);
     }
   }
   for (const e of peerEdges) {
     if (activeSet.has(e.source) && activeSet.has(e.target)) {
-      neighborsMap.get(e.source).push(e.target);
-      neighborsMap.get(e.target).push(e.source);
+      neighborsMap.get(e.source)?.push(e.target);
+      neighborsMap.get(e.target)?.push(e.source);
     }
   }
 
   // Assign normalized initial X rank in [-1, 1]
-  const normX = new Map();
+  const normX = new Map<string, number>();
   for (const [, list] of buckets) {
     const len = list.length;
     list.forEach((node, idx) => {
@@ -890,7 +1066,7 @@ function computeChronologicalLayout(visibleNodes, directedEdges, peerEdges, show
       const list = buckets.get(eraId);
       if (!list || list.length <= 1) continue;
 
-      const barycenters = new Map();
+      const barycenters = new Map<string, number>();
       for (const node of list) {
         const nbrs = neighborsMap.get(node.id) || [];
         if (nbrs.length === 0) {
@@ -900,7 +1076,10 @@ function computeChronologicalLayout(visibleNodes, directedEdges, peerEdges, show
           for (const nbrId of nbrs) {
             sum += normX.get(nbrId) ?? 0;
           }
-          barycenters.set(node.id, 0.8 * (sum / nbrs.length) + 0.2 * (normX.get(node.id) ?? 0));
+          const avg = sum / nbrs.length;
+          const cur = normX.get(node.id) ?? 0;
+          const val = 0.8 * avg + 0.2 * cur;
+          barycenters.set(node.id, Number.isFinite(val) ? val : 0);
         }
       }
 
@@ -920,10 +1099,10 @@ function computeChronologicalLayout(visibleNodes, directedEdges, peerEdges, show
   const MAX_COLS_PER_SUBROW = 34;
 
   const mCtx = getMeasureContext();
-  const positionedNodes = [];
-  const positionedMap = new Map();
-  const spatialGrid = new Map();
-  const swimlanes = [];
+  const positionedNodes: PositionedNode[] = [];
+  const positionedMap = new Map<string, PositionedNode>();
+  const spatialGrid = new Map<string, PositionedNode[]>();
+  const swimlanes: Swimlane[] = [];
 
   let currentY = 80;
   let minX = -600;
@@ -931,7 +1110,7 @@ function computeChronologicalLayout(visibleNodes, directedEdges, peerEdges, show
 
   for (const era of ERA_BUCKETS) {
     if (!buckets.has(era.id)) continue;
-    const list = buckets.get(era.id);
+    const list = buckets.get(era.id) || [];
     const count = list.length;
 
     const numSubRows = Math.max(1, Math.ceil(count / MAX_COLS_PER_SUBROW));
@@ -957,40 +1136,74 @@ function computeChronologicalLayout(visibleNodes, directedEdges, peerEdges, show
         const colsInThisSubRow = Math.ceil((count - subRow) / numSubRows);
 
         const rowWidth = (colsInThisSubRow - 1) * (NODE_W + H_GAP);
-        const x = -rowWidth / 2 + col * (NODE_W + H_GAP);
+        const rawX = -rowWidth / 2 + col * (NODE_W + H_GAP);
 
         let intraOffset = 0;
-        if (node.year !== null && era.minYear !== null && era.maxYear !== null && era.id !== 'Pre-1900') {
+        if (
+          node.year !== null &&
+          Number.isFinite(node.year) &&
+          era.minYear !== null &&
+          Number.isFinite(era.minYear) &&
+          era.maxYear !== null &&
+          Number.isFinite(era.maxYear) &&
+          era.id !== 'Pre-1900'
+        ) {
           const frac = Math.max(0, Math.min(1, (node.year - era.minYear) / 9));
           intraOffset = (frac - 0.5) * 14;
         }
 
         const totalSubHeight = (numSubRows - 1) * SUBROW_H;
-        const y = bandTop + bandHeight / 2 - totalSubHeight / 2 + subRow * SUBROW_H + intraOffset;
+        const rawY =
+          bandTop + bandHeight / 2 - totalSubHeight / 2 + subRow * SUBROW_H + intraOffset;
 
-        // Precompute badge & truncated label once (never in render loop)
+        // Guard against any NaN coordinate propagation
+        const x = Number.isFinite(rawX) ? rawX : 0;
+        const y = Number.isFinite(rawY) ? rawY : bandTop + bandHeight / 2;
+
+        // Precompute badge & truncated labels (standard & thumbnail-indented) once
         const degText = String(node.degree);
         let badgeW = 22;
         let truncatedLabel = node.label;
+        let truncatedLabelThumb = node.label;
         let labelWidth = node.label.length * 6.8;
 
         if (mCtx) {
           mCtx.font = '600 10px Inter, system-ui, sans-serif';
           badgeW = Math.max(20, mCtx.measureText(degText).width + 10);
           const textMaxW = NODE_W - badgeW - 38;
+          const thumbTextMaxW = NODE_W - badgeW - 50;
           mCtx.font = '600 12px Inter, system-ui, sans-serif';
           labelWidth = mCtx.measureText(truncatedLabel).width;
+
           if (labelWidth > textMaxW) {
-            while (truncatedLabel.length > 3 && mCtx.measureText(`${truncatedLabel}…`).width > textMaxW) {
+            while (
+              truncatedLabel.length > 3 &&
+              mCtx.measureText(`${truncatedLabel}…`).width > textMaxW
+            ) {
               truncatedLabel = truncatedLabel.slice(0, -1);
             }
             truncatedLabel = `${truncatedLabel}…`;
             labelWidth = mCtx.measureText(truncatedLabel).width;
           }
+
+          if (mCtx.measureText(truncatedLabelThumb).width > thumbTextMaxW) {
+            while (
+              truncatedLabelThumb.length > 3 &&
+              mCtx.measureText(`${truncatedLabelThumb}…`).width > thumbTextMaxW
+            ) {
+              truncatedLabelThumb = truncatedLabelThumb.slice(0, -1);
+            }
+            truncatedLabelThumb = `${truncatedLabelThumb}…`;
+          }
         }
 
-        const dotRadius = Math.min(11, 4.5 + Math.sqrt(node.degree) * 1.1);
-        const pNode = {
+        const tierBonus = node.tier === 1 ? 2.5 : node.tier === 2 ? 1.2 : 0;
+        const dotRadius = Math.min(
+          13,
+          4.2 + Math.sqrt(Math.max(0, node.degree)) * 1.05 + tierBonus
+        );
+
+        const pNode: PositionedNode = {
           ...node,
           x,
           y,
@@ -1000,6 +1213,7 @@ function computeChronologicalLayout(visibleNodes, directedEdges, peerEdges, show
           degText,
           badgeW,
           truncatedLabel,
+          truncatedLabelThumb,
           labelWidth,
         };
 
@@ -1033,8 +1247,8 @@ function computeChronologicalLayout(visibleNodes, directedEdges, peerEdges, show
     currentY = bandBottom;
   }
 
-  // Precompute Path2D + bounding boxes for all visible directed & peer edges
-  const layoutDirectedEdges = [];
+  // Precompute Path2D + bounding boxes + endpoint tiers for all visible directed & peer edges
+  const layoutDirectedEdges: LayoutEdge[] = [];
   for (const edge of directedEdges) {
     const src = positionedMap.get(edge.source);
     const tgt = positionedMap.get(edge.target);
@@ -1043,10 +1257,12 @@ function computeChronologicalLayout(visibleNodes, directedEdges, peerEdges, show
     layoutDirectedEdges.push({
       ...edge,
       ...geom,
+      sourceTier: src.tier,
+      targetTier: tgt.tier,
     });
   }
 
-  const layoutPeerEdges = [];
+  const layoutPeerEdges: LayoutEdge[] = [];
   for (const edge of peerEdges) {
     const src = positionedMap.get(edge.source);
     const tgt = positionedMap.get(edge.target);
@@ -1055,6 +1271,8 @@ function computeChronologicalLayout(visibleNodes, directedEdges, peerEdges, show
     layoutPeerEdges.push({
       ...edge,
       ...geom,
+      sourceTier: src.tier,
+      targetTier: tgt.tier,
     });
   }
 
@@ -1074,7 +1292,14 @@ function computeChronologicalLayout(visibleNodes, directedEdges, peerEdges, show
   };
 }
 
-function drawRoundedRect(ctx, x, y, w, h, r) {
+function drawRoundedRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number
+) {
   const radius = Math.min(r, w / 2, h / 2);
   ctx.beginPath();
   ctx.moveTo(x + radius, y);
@@ -1090,36 +1315,35 @@ function drawRoundedRect(ctx, x, y, w, h, r) {
 // ============================================================================
 export default function App() {
   // Low-frequency UI State ONLY
-  const [rawDataset, setRawDataset] = useState(BUILTIN_DATASET);
-  const [datasetSourceName, setDatasetSourceName] = useState('Built-in Sample (1850–2026)');
-  const [isCustomDataset, setIsCustomDataset] = useState(false);
-  const [toast, setToast] = useState(null);
-  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const [rawDataset, setRawDataset] = useState<RawDatasetInput>(BUILTIN_DATASET);
+  const [datasetSourceName, setDatasetSourceName] = useState<string>('Built-in Sample (1850–2026)');
+  const [isCustomDataset, setIsCustomDataset] = useState<boolean>(false);
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const [isDraggingFile, setIsDraggingFile] = useState<boolean>(false);
 
-  const [selectedId, setSelectedId] = useState('Cyberpunk');
-  const [focusLineageOnly, setFocusLineageOnly] = useState(false);
-  const [hideIsolated, setHideIsolated] = useState(false);
-  const [showUndated, setShowUndated] = useState(false);
-  const [showSubgenres, setShowSubgenres] = useState(true);
-  const [showChronological, setShowChronological] = useState(true);
-  const [showOverlaps, setShowOverlaps] = useState(false);
-  const [showFilterPanel, setShowFilterPanel] = useState(true);
+  const [selectedId, setSelectedId] = useState<string | null>('Cyberpunk');
+  const [focusLineageOnly, setFocusLineageOnly] = useState<boolean>(false);
+  const [hideIsolated, setHideIsolated] = useState<boolean>(false);
+  const [showUndated, setShowUndated] = useState<boolean>(false);
+  const [showSubgenres, setShowSubgenres] = useState<boolean>(true);
+  const [showChronological, setShowChronological] = useState<boolean>(true);
+  const [showOverlaps, setShowOverlaps] = useState<boolean>(false);
+  const [showFilterPanel, setShowFilterPanel] = useState<boolean>(true);
 
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchFocused, setSearchFocused] = useState(false);
-  const searchInputRef = useRef(null);
-  const fileInputRef = useRef(null);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [searchFocused, setSearchFocused] = useState<boolean>(false);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [imgError, setImgError] = useState(false);
-  useEffect(() => {
-    setImgError(false);
-  }, [selectedId]);
+  // Track which selectedId had an image load error in the Inspector Drawer
+  const [failedSelectedImageId, setFailedSelectedImageId] = useState<string | null>(null);
+  const imgError = Boolean(selectedId && failedSelectedImageId === selectedId);
 
-  // Imperative Refs for Locked-60fps Rendering (Zero React re-renders on pan/zoom/hover)
-  const canvasRef = useRef(null);
-  const containerRef = useRef(null);
-  const tooltipRef = useRef(null);
-  const zoomTextRef = useRef(null);
+  // Imperative Refs for Locked-60fps Rendering (Zero React re-renders on pan/zoom/hover/thumbnails)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const tooltipRef = useRef<HTMLDivElement | null>(null);
+  const zoomTextRef = useRef<HTMLSpanElement | null>(null);
 
   const cameraRef = useRef({
     x: 0,
@@ -1129,8 +1353,11 @@ export default function App() {
     targetY: 0,
     targetScale: 0.85,
   });
-  const dirtyRef = useRef(true);
-  const hoveredIdRef = useRef(null);
+  const dirtyRef = useRef<boolean>(true);
+  const hoveredIdRef = useRef<string | null>(null);
+  const imageCacheRef = useRef<Map<string, CachedImageEntry>>(new Map());
+  const activeImageLoadsRef = useRef<number>(0);
+
   const dragStateRef = useRef({
     active: false,
     moved: false,
@@ -1142,7 +1369,7 @@ export default function App() {
     origCamScale: 1,
   });
 
-  const triggerToast = useCallback((message, type = 'info') => {
+  const triggerToast = useCallback((message: string, type: ToastState['type'] = 'info') => {
     setToast({ message, type });
   }, []);
 
@@ -1153,7 +1380,7 @@ export default function App() {
   }, [toast]);
 
   const loadJsonPayload = useCallback(
-    (data, sourceLabel) => {
+    (data: RawDatasetInput, sourceLabel: string) => {
       const hasNodesArray = Array.isArray(data) || Array.isArray(data?.nodes);
       if (!data || !hasNodesArray) {
         triggerToast('Invalid JSON format: expected { "nodes": [...], "edges": [...] } or [...]', 'error');
@@ -1167,8 +1394,11 @@ export default function App() {
       const norm = normalizeGraphDataset(data);
       setHideIsolated(norm.nodes.length > 100);
 
-      const sortedByDegree = [...norm.nodes].sort((a, b) => b.degree - a.degree);
-      const topNode = sortedByDegree[0] || norm.nodes[0];
+      const sortedByImportance = [...norm.nodes].sort(
+        (a, b) => a.tier - b.tier || b.pagerank - a.pagerank || b.degree - a.degree
+      );
+      const topNode =
+        norm.nodeMap.get('Cyberpunk') || sortedByImportance[0] || norm.nodes[0];
       setSelectedId(topNode ? topNode.id : null);
       dirtyRef.current = true;
 
@@ -1182,35 +1412,48 @@ export default function App() {
     [triggerToast]
   );
 
-  // Silent autoload if aesthetics_data.json is served alongside the app
+  // Silent autoload of /aesthetics_data_tiered.json from public/ on mount (with fallback to /aesthetics_data.json)
   useEffect(() => {
     let cancelled = false;
-    fetch('./aesthetics_data.json')
-      .then((res) => {
-        if (!res.ok) throw new Error('Not found');
-        return res.json();
-      })
-      .then((data) => {
-        if (!cancelled && data && (Array.isArray(data) || Array.isArray(data.nodes))) {
-          loadJsonPayload(data, 'aesthetics_data.json');
+
+    const tryLoadFromPublic = async () => {
+      const candidates = [
+        { url: './aesthetics_data_tiered.json', label: 'aesthetics_data_tiered.json' },
+        { url: './aesthetics_data.json', label: 'aesthetics_data.json' },
+      ];
+      for (const candidate of candidates) {
+        try {
+          const res = await fetch(candidate.url);
+          if (!res.ok) continue;
+          const data = await res.json();
+          if (!cancelled && data && (Array.isArray(data) || Array.isArray(data.nodes))) {
+            loadJsonPayload(data, candidate.label);
+            return;
+          }
+        } catch {
+          // Proceed to next candidate or built-in sample
         }
-      })
-      .catch(() => {});
+      }
+    };
+
+    tryLoadFromPublic();
     return () => {
       cancelled = true;
     };
   }, [loadJsonPayload]);
 
   const handleFileObject = useCallback(
-    (file) => {
+    (file: File | null | undefined) => {
       if (!file) return;
       const reader = new FileReader();
       reader.onload = (ev) => {
         try {
-          const parsed = JSON.parse(ev.target.result);
+          const rawText = typeof ev.target?.result === 'string' ? ev.target.result : '';
+          const parsed = JSON.parse(rawText);
           loadJsonPayload(parsed, file.name);
         } catch (err) {
-          triggerToast(`Could not parse JSON: ${err.message}`, 'error');
+          const errMsg = err instanceof Error ? err.message : 'Unknown error';
+          triggerToast(`Could not parse JSON: ${errMsg}`, 'error');
         }
       };
       reader.readAsText(file);
@@ -1219,18 +1462,18 @@ export default function App() {
   );
 
   useEffect(() => {
-    const onDragOver = (e) => {
+    const onDragOver = (e: DragEvent) => {
       e.preventDefault();
       if (e.dataTransfer?.types?.includes('Files')) {
         setIsDraggingFile(true);
       }
     };
-    const onDragLeave = (e) => {
+    const onDragLeave = (e: DragEvent) => {
       if (e.relatedTarget === null) {
         setIsDraggingFile(false);
       }
     };
-    const onDrop = (e) => {
+    const onDrop = (e: DragEvent) => {
       e.preventDefault();
       setIsDraggingFile(false);
       const file = e.dataTransfer?.files?.[0];
@@ -1248,7 +1491,7 @@ export default function App() {
 
   // Keyboard shortcuts ('/' to search, 'Escape' to clear)
   useEffect(() => {
-    const onKeyDown = (e) => {
+    const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === '/' && document.activeElement !== searchInputRef.current) {
         e.preventDefault();
         searchInputRef.current?.focus();
@@ -1271,12 +1514,12 @@ export default function App() {
 
   // Compute full upstream ancestry, downstream descendants, and lateral peers for selectedId
   const lineage = useMemo(() => {
-    const ancestorNodes = new Set();
-    const descendantNodes = new Set();
-    const peerNodes = new Set();
-    const ancestorEdges = new Set();
-    const descendantEdges = new Set();
-    const peerEdgesSet = new Set();
+    const ancestorNodes = new Set<string>();
+    const descendantNodes = new Set<string>();
+    const peerNodes = new Set<string>();
+    const ancestorEdges = new Set<string>();
+    const descendantEdges = new Set<string>();
+    const peerEdgesSet = new Set<string>();
 
     if (!selectedId || !graph.nodeMap.has(selectedId)) {
       return {
@@ -1286,14 +1529,15 @@ export default function App() {
         ancestorEdges,
         descendantEdges,
         peerEdgesSet,
-        allFamilyNodes: new Set(),
+        allFamilyNodes: new Set<string>(),
       };
     }
 
-    const upQueue = [selectedId];
-    const upVisited = new Set([selectedId]);
+    const upQueue: string[] = [selectedId];
+    const upVisited = new Set<string>([selectedId]);
     while (upQueue.length > 0) {
       const currId = upQueue.shift();
+      if (!currId) continue;
       const currNode = graph.nodeMap.get(currId);
       if (!currNode) continue;
       for (const pId of currNode.parents) {
@@ -1306,10 +1550,11 @@ export default function App() {
       }
     }
 
-    const downQueue = [selectedId];
-    const downVisited = new Set([selectedId]);
+    const downQueue: string[] = [selectedId];
+    const downVisited = new Set<string>([selectedId]);
     while (downQueue.length > 0) {
       const currId = downQueue.shift();
+      if (!currId) continue;
       const currNode = graph.nodeMap.get(currId);
       if (!currNode) continue;
       for (const cId of currNode.children) {
@@ -1331,7 +1576,7 @@ export default function App() {
       }
     }
 
-    const allFamilyNodes = new Set([
+    const allFamilyNodes = new Set<string>([
       selectedId,
       ...ancestorNodes,
       ...descendantNodes,
@@ -1420,7 +1665,7 @@ export default function App() {
 
   // Smooth pan-to-node
   const focusNode = useCallback(
-    (nodeId, autoSelect = true) => {
+    (nodeId: string, autoSelect = true) => {
       const targetNode = layout.positionedMap.get(nodeId);
       if (autoSelect) setSelectedId(nodeId);
       if (!targetNode || !containerRef.current) return;
@@ -1443,11 +1688,13 @@ export default function App() {
     fitToScreen(false);
   }, [rawDataset, focusLineageOnly]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Instant search results
-  const searchResults = useMemo(() => {
+  // Instant search results & search-matched lineage set for progressive-disclosure bypass
+  const { searchResults, searchMatchSet } = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return [];
-    const matches = [];
+    if (!q) {
+      return { searchResults: [] as NormalizedNode[], searchMatchSet: new Set<string>() };
+    }
+    const matches: Array<{ node: NormalizedNode; score: number }> = [];
     for (const node of graph.nodes) {
       const inLabel = node.label.toLowerCase().includes(q);
       const inMotifs = node.motifs.toLowerCase().includes(q);
@@ -1460,8 +1707,16 @@ export default function App() {
         });
       }
     }
-    matches.sort((a, b) => b.score - a.score || b.node.degree - a.node.degree);
-    return matches.slice(0, 12).map((m) => m.node);
+    matches.sort(
+      (a, b) =>
+        b.score - a.score ||
+        a.node.tier - b.node.tier ||
+        b.node.pagerank - a.node.pagerank ||
+        b.node.degree - a.node.degree
+    );
+    const topNodes = matches.slice(0, 12).map((m) => m.node);
+    const matchIds = new Set<string>(topNodes.map((n) => n.id));
+    return { searchResults: topNodes, searchMatchSet: matchIds };
   }, [searchQuery, graph.nodes]);
 
   // Keep latest render parameters in a ref so the RAF loop never restarts unnecessarily
@@ -1469,6 +1724,7 @@ export default function App() {
     layout,
     selectedId,
     lineage,
+    searchMatchSet,
     showSubgenres,
     showChronological,
     showOverlaps,
@@ -1478,15 +1734,16 @@ export default function App() {
       layout,
       selectedId,
       lineage,
+      searchMatchSet,
       showSubgenres,
       showChronological,
       showOverlaps,
     };
     dirtyRef.current = true;
-  }, [layout, selectedId, lineage, showSubgenres, showChronological, showOverlaps]);
+  }, [layout, selectedId, lineage, searchMatchSet, showSubgenres, showChronological, showOverlaps]);
 
   // ============================================================================
-  // 6. LOCKED-60FPS DIRTY-FLAGGED CANVAS RENDER LOOP (BATCHED PATH2D)
+  // 6. LOCKED-60FPS DIRTY-FLAGGED CANVAS RENDER LOOP (BATCHED PATH2D + TIER LOD)
   // ============================================================================
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1494,9 +1751,42 @@ export default function App() {
     if (!canvas || !container) return;
 
     const ctx = canvas.getContext('2d', { alpha: false });
+    if (!ctx) return;
     let width = 0;
     let height = 0;
-    let rafId = null;
+    let rafId: number | null = null;
+
+    // Lazy Fandom CDN thumbnail loader (strictly no crossOrigin = 'anonymous', uses referrerPolicy = 'no-referrer')
+    const requestNodeThumbnail = (url: string): HTMLImageElement | null => {
+      if (!url) return null;
+      const cache = imageCacheRef.current;
+      const existing = cache.get(url);
+      if (existing) {
+        return existing.status === 'loaded' ? existing.img : null;
+      }
+
+      if (activeImageLoadsRef.current >= 8) {
+        return null;
+      }
+
+      activeImageLoadsRef.current += 1;
+      const img = new Image();
+      img.referrerPolicy = 'no-referrer';
+      const entry: CachedImageEntry = { status: 'loading', img };
+      cache.set(url, entry);
+
+      img.onload = () => {
+        activeImageLoadsRef.current = Math.max(0, activeImageLoadsRef.current - 1);
+        entry.status = 'loaded';
+        dirtyRef.current = true;
+      };
+      img.onerror = () => {
+        activeImageLoadsRef.current = Math.max(0, activeImageLoadsRef.current - 1);
+        entry.status = 'error';
+      };
+      img.src = url;
+      return null;
+    };
 
     const handleResize = () => {
       const rect = container.getBoundingClientRect();
@@ -1517,14 +1807,15 @@ export default function App() {
 
     const renderScene = () => {
       const cam = cameraRef.current;
-      const k = cam.scale;
-      const camX = cam.x;
-      const camY = cam.y;
+      const k = Number.isFinite(cam.scale) && cam.scale > 0 ? cam.scale : 0.85;
+      const camX = Number.isFinite(cam.x) ? cam.x : 0;
+      const camY = Number.isFinite(cam.y) ? cam.y : 0;
 
       const {
         layout: currentLayout,
         selectedId: activeSelectedId,
         lineage: activeLineage,
+        searchMatchSet: activeSearchMatches,
         showSubgenres: subOn,
         showChronological: chronoOn,
         showOverlaps: overlapOn,
@@ -1562,121 +1853,124 @@ export default function App() {
         ctx.stroke();
       }
 
-      const hasSelection = Boolean(activeSelectedId && currentLayout.positionedMap.has(activeSelectedId));
+      const hasSelection = Boolean(
+        activeSelectedId && currentLayout.positionedMap.has(activeSelectedId)
+      );
+      const hasSearchMatches = activeSearchMatches.size > 0;
 
-      // Compute ambient hairline fade at far zoom (scale < 0.35) when nothing is selected/hovered
-      let ambientAlpha = hasSelection ? 0.06 : k < 0.42 ? 0.24 : 0.42;
-      if (!hasSelection && !hoveredNode && k < 0.35) {
-        ambientAlpha = Math.max(0, ((k - 0.22) / 0.13) * 0.24);
-      }
-
-      // 2) Batched Path2D Edge Buckets (1 stroke() call per style bucket)
-      const ambientSubgenreBatch = ambientAlpha > 0.01 && subOn ? new Path2D() : null;
-      const ambientChronoBatch = ambientAlpha > 0.01 && chronoOn ? new Path2D() : null;
-      const ambientPeerBatch = ambientAlpha > 0.01 && overlapOn ? new Path2D() : null;
-
+      // 2) Active Lineage, Hover & Search Path2D Edge Buckets ONLY
+      // Ambient background edges for inactive nodes are intentionally not drawn at any zoom level.
       const ancestorBatch = hasSelection ? new Path2D() : null;
       const descendantBatch = hasSelection ? new Path2D() : null;
       const activePeerBatch = hasSelection ? new Path2D() : null;
-      const hoverPreviewBatch = !hasSelection && hoveredNode ? new Path2D() : null;
+      const hoverPreviewBatch = hoveredNode ? new Path2D() : null;
+      const searchEdgeBatch = hasSearchMatches ? new Path2D() : null;
 
-      // Collect directed edges into batches
-      for (let i = 0; i < currentLayout.layoutDirectedEdges.length; i++) {
-        const edge = currentLayout.layoutDirectedEdges[i];
-        if (edge.kind === 'subgenre' && !subOn) continue;
-        if (edge.kind === 'chronological' && !chronoOn) continue;
+      // Only iterate edges when there is an active selection, hover, or search query
+      if (hasSelection || hoveredNode || hasSearchMatches) {
+        // Collect directed edges into active batches
+        for (let i = 0; i < currentLayout.layoutDirectedEdges.length; i++) {
+          const edge = currentLayout.layoutDirectedEdges[i];
+          if (edge.kind === 'subgenre' && !subOn) continue;
+          if (edge.kind === 'chronological' && !chronoOn) continue;
 
-        // Frustum cull
-        if (
-          edge.maxX < worldLeft ||
-          edge.minX > worldRight ||
-          edge.maxY < worldTop ||
-          edge.minY > worldBottom
-        ) {
-          continue;
-        }
-
-        if (hasSelection) {
-          if (activeLineage.ancestorEdges.has(edge.id)) {
-            ancestorBatch.addPath(edge.path);
+          // Frustum cull
+          if (
+            edge.maxX < worldLeft ||
+            edge.minX > worldRight ||
+            edge.maxY < worldTop ||
+            edge.minY > worldBottom
+          ) {
             continue;
           }
-          if (activeLineage.descendantEdges.has(edge.id)) {
-            descendantBatch.addPath(edge.path);
+
+          if (hasSelection) {
+            if (activeLineage.ancestorEdges.has(edge.id) && ancestorBatch) {
+              ancestorBatch.addPath(edge.path);
+              continue;
+            }
+            if (activeLineage.descendantEdges.has(edge.id) && descendantBatch) {
+              descendantBatch.addPath(edge.path);
+              continue;
+            }
+          }
+          if (
+            hoveredNode &&
+            hoverPreviewBatch &&
+            (edge.source === hoveredNode.id || edge.target === hoveredNode.id)
+          ) {
+            hoverPreviewBatch.addPath(edge.path);
             continue;
           }
-        } else if (hoveredNode && (edge.source === hoveredNode.id || edge.target === hoveredNode.id)) {
-          hoverPreviewBatch.addPath(edge.path);
-          continue;
+          if (
+            hasSearchMatches &&
+            searchEdgeBatch &&
+            (activeSearchMatches.has(edge.source) || activeSearchMatches.has(edge.target))
+          ) {
+            searchEdgeBatch.addPath(edge.path);
+          }
         }
 
-        if (edge.kind === 'subgenre' && ambientSubgenreBatch) {
-          ambientSubgenreBatch.addPath(edge.path);
-        } else if (edge.kind === 'chronological' && ambientChronoBatch) {
-          ambientChronoBatch.addPath(edge.path);
+        // Collect peer/lateral edges into active batches
+        for (let i = 0; i < currentLayout.layoutPeerEdges.length; i++) {
+          const edge = currentLayout.layoutPeerEdges[i];
+          if (
+            edge.maxX < worldLeft ||
+            edge.minX > worldRight ||
+            edge.maxY < worldTop ||
+            edge.minY > worldBottom
+          ) {
+            continue;
+          }
+
+          if (hasSelection && activeLineage.peerEdgesSet.has(edge.id) && activePeerBatch) {
+            activePeerBatch.addPath(edge.path);
+            continue;
+          }
+          if (
+            hoveredNode &&
+            hoverPreviewBatch &&
+            (edge.source === hoveredNode.id || edge.target === hoveredNode.id)
+          ) {
+            hoverPreviewBatch.addPath(edge.path);
+            continue;
+          }
+          if (
+            overlapOn &&
+            hasSearchMatches &&
+            searchEdgeBatch &&
+            (activeSearchMatches.has(edge.source) || activeSearchMatches.has(edge.target))
+          ) {
+            searchEdgeBatch.addPath(edge.path);
+          }
         }
       }
 
-      // Collect peer/lateral edges into batches
-      for (let i = 0; i < currentLayout.layoutPeerEdges.length; i++) {
-        const edge = currentLayout.layoutPeerEdges[i];
-        if (
-          edge.maxX < worldLeft ||
-          edge.minX > worldRight ||
-          edge.maxY < worldTop ||
-          edge.minY > worldBottom
-        ) {
-          continue;
-        }
-
-        if (hasSelection && activeLineage.peerEdgesSet.has(edge.id)) {
-          activePeerBatch.addPath(edge.path);
-          continue;
-        }
-        if (!hasSelection && hoveredNode && (edge.source === hoveredNode.id || edge.target === hoveredNode.id)) {
-          hoverPreviewBatch.addPath(edge.path);
-          continue;
-        }
-        if (ambientPeerBatch) {
-          ambientPeerBatch.addPath(edge.path);
-        }
-      }
-
-      const baseStrokeW = Math.max(0.8, 1.25 / Math.sqrt(k));
       const activeStrokeW = Math.max(2.1, 2.7 / Math.sqrt(k));
+      let currentAlpha = 1;
+      const setAlpha = (a: number) => {
+        if (Math.abs(currentAlpha - a) > 0.005) {
+          ctx.globalAlpha = a;
+          currentAlpha = a;
+        }
+      };
 
-      if (ambientChronoBatch) {
-        ctx.globalAlpha = ambientAlpha;
-        ctx.strokeStyle = '#334155';
-        ctx.lineWidth = baseStrokeW;
-        ctx.stroke(ambientChronoBatch);
-      }
-
-      if (ambientSubgenreBatch) {
-        ctx.globalAlpha = ambientAlpha;
-        ctx.strokeStyle = '#475569';
-        ctx.lineWidth = baseStrokeW;
-        ctx.stroke(ambientSubgenreBatch);
-      }
-
-      if (ambientPeerBatch) {
-        ctx.globalAlpha = hasSelection ? 0.05 : ambientAlpha * 0.85;
-        ctx.strokeStyle = '#64748b';
-        ctx.lineWidth = baseStrokeW;
-        ctx.setLineDash([5, 5]);
-        ctx.stroke(ambientPeerBatch);
-        ctx.setLineDash([]);
+      if (searchEdgeBatch) {
+        setAlpha(0.65);
+        ctx.strokeStyle = '#e879f9';
+        ctx.lineWidth = Math.max(1.5, 2.0 / Math.sqrt(k));
+        ctx.stroke(searchEdgeBatch);
       }
 
       if (hoverPreviewBatch) {
-        ctx.globalAlpha = 0.88;
+        setAlpha(0.88);
         ctx.strokeStyle = '#e879f9';
         ctx.lineWidth = activeStrokeW;
         ctx.stroke(hoverPreviewBatch);
       }
 
       if (activePeerBatch) {
-        ctx.globalAlpha = 0.92;
+        setAlpha(0.92);
         ctx.strokeStyle = '#a855f7';
         ctx.lineWidth = activeStrokeW;
         ctx.setLineDash([6, 5]);
@@ -1685,30 +1979,44 @@ export default function App() {
       }
 
       if (ancestorBatch) {
-        ctx.globalAlpha = 0.95;
+        setAlpha(0.95);
         ctx.strokeStyle = '#f59e0b';
         ctx.lineWidth = activeStrokeW;
         ctx.stroke(ancestorBatch);
       }
 
       if (descendantBatch) {
-        ctx.globalAlpha = 0.95;
+        setAlpha(0.95);
         ctx.strokeStyle = '#06b6d4';
         ctx.lineWidth = activeStrokeW;
         ctx.stroke(descendantBatch);
       }
 
-      // 3) Render Nodes (LOD Semantic Zoom at scale = 0.42, zero shadowBlur, zero measureText)
-      const isZoomedOut = k < 0.42;
-      const deferredLabels = [];
+      // 3) Render Nodes:
+      // - Lightweight dot mode until k >= 0.80 (eliminates mid-zoom 35%-80% card overhead)
+      // - Detailed pill cards at k >= 0.80, with lazy Fandom CDN thumbnails at k >= 0.95
+      const isDotMode = k < 0.8;
+      const isHighZoom = k >= 0.95;
+      const deferredLabels: Array<{
+        node: PositionedNode;
+        radius: number;
+        isSelected: boolean;
+        isHovered: boolean;
+        isInFamily: boolean;
+        isSearchMatch: boolean;
+      }> = [];
 
       for (let i = 0; i < currentLayout.positionedNodes.length; i++) {
         const node = currentLayout.positionedNodes[i];
+
+        // Tight viewport frustum culling (uses actual dot radius in dot mode, pill half-dimensions in card mode)
+        const extentX = isDotMode ? node.dotRadius + 8 : node.width / 2 + 6;
+        const extentY = isDotMode ? node.dotRadius + 8 : node.height / 2 + 6;
         if (
-          node.x + node.width < worldLeft ||
-          node.x - node.width > worldRight ||
-          node.y + node.height < worldTop ||
-          node.y - node.height > worldBottom
+          node.x + extentX < worldLeft ||
+          node.x - extentX > worldRight ||
+          node.y + extentY < worldTop ||
+          node.y - extentY > worldBottom
         ) {
           continue;
         }
@@ -1718,49 +2026,77 @@ export default function App() {
         const isAncestor = hasSelection && activeLineage.ancestorNodes.has(node.id);
         const isDescendant = hasSelection && activeLineage.descendantNodes.has(node.id);
         const isPeer = hasSelection && activeLineage.peerNodes.has(node.id);
+        const isHoveredNeighbor = Boolean(
+          hoveredNode &&
+            (hoveredNode.parents.includes(node.id) ||
+              hoveredNode.children.includes(node.id) ||
+              hoveredNode.peers.includes(node.id))
+        );
+        const isSearchMatch = hasSearchMatches && activeSearchMatches.has(node.id);
         const isInFamily = isSelected || isAncestor || isDescendant || isPeer;
-        const isDimmed = hasSelection && !isInFamily && !isHovered;
+        const isBypassed = isInFamily || isHovered || isHoveredNeighbor || isSearchMatch;
+
+        // Progressive disclosure culling & fade based on node.tier and zoom k
+        const tierAlpha = getNodeTierAlpha(node.tier, k, isBypassed);
+        if (tierAlpha <= 0.01) continue;
+
+        const isDimmed = hasSelection && !isInFamily && !isHovered && !isSearchMatch;
 
         let accentColor = node.eraColor;
         if (isSelected) accentColor = '#f472b6';
         else if (isAncestor) accentColor = '#f59e0b';
         else if (isDescendant) accentColor = '#06b6d4';
         else if (isPeer) accentColor = '#a855f7';
+        else if (isSearchMatch) accentColor = '#e879f9';
 
-        ctx.globalAlpha = isDimmed ? 0.16 : 1;
+        const finalAlpha = (isDimmed ? 0.16 : 1) * tierAlpha;
 
-        if (isZoomedOut) {
+        if (isDotMode) {
           const baseRadius = node.dotRadius;
-          const radius = isSelected ? baseRadius + 4 : isInFamily || isHovered ? baseRadius + 2 : baseRadius;
+          const radius = isSelected
+            ? baseRadius + 4
+            : isInFamily || isHovered || isSearchMatch
+            ? baseRadius + 2
+            : baseRadius;
 
-          // Lightweight concentric halo instead of expensive shadowBlur
-          if (isSelected || isHovered || isInFamily || node.degree >= 5) {
+          // Lightweight concentric halo for active or Tier 1 nodes
+          if (isSelected || isHovered || isInFamily || isSearchMatch || node.tier === 1) {
+            setAlpha((isDimmed ? 0.04 : isSelected ? 0.34 : 0.18) * tierAlpha);
             ctx.beginPath();
             ctx.arc(node.x, node.y, radius + 5, 0, Math.PI * 2);
             ctx.fillStyle = accentColor;
-            ctx.globalAlpha = isDimmed ? 0.04 : isSelected ? 0.32 : 0.16;
             ctx.fill();
-            ctx.globalAlpha = isDimmed ? 0.16 : 1;
           }
 
+          setAlpha(finalAlpha);
           ctx.beginPath();
           ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
           ctx.fillStyle = isSelected ? '#ffffff' : accentColor;
           ctx.fill();
 
-          if (isSelected || isHovered || isInFamily) {
+          if (isSelected || isHovered || isInFamily || isSearchMatch) {
             ctx.lineWidth = 2.2 / k;
             ctx.strokeStyle = isSelected ? '#f472b6' : '#ffffff';
             ctx.stroke();
           }
 
-          if (isSelected || isHovered || isInFamily || node.degree >= 6) {
+          // Queue readable title above dot (Tier 1-2 always, Tier 3-4 as zoom increases, plus all active/lineage nodes)
+          if (
+            isSelected ||
+            isHovered ||
+            isInFamily ||
+            isSearchMatch ||
+            node.tier <= 2 ||
+            (node.tier === 3 && k >= 0.48) ||
+            (node.tier === 4 && k >= 0.7)
+          ) {
             deferredLabels.push({
               node,
               radius,
               isSelected,
               isHovered,
               isInFamily,
+              isSearchMatch,
             });
           }
         } else {
@@ -1771,27 +2107,74 @@ export default function App() {
           const r = h / 2;
 
           // Lightweight concentric outer halo for active/hovered pill
-          if (isSelected || isHovered) {
+          if (isSelected || isHovered || isSearchMatch) {
+            setAlpha((isSelected ? 0.24 : 0.16) * tierAlpha);
             drawRoundedRect(ctx, left - 4, top - 4, w + 8, h + 8, r + 4);
             ctx.fillStyle = accentColor;
-            ctx.globalAlpha = isSelected ? 0.24 : 0.16;
             ctx.fill();
-            ctx.globalAlpha = 1;
           }
 
+          setAlpha(finalAlpha);
           drawRoundedRect(ctx, left, top, w, h, r);
           ctx.fillStyle = isSelected ? '#1e1b4b' : isInFamily ? '#111b2e' : '#0f172a';
           ctx.fill();
 
-          ctx.lineWidth = isSelected ? 2.4 : isInFamily || isHovered ? 1.9 : 1.1;
-          ctx.strokeStyle = isSelected || isInFamily || isHovered ? accentColor : '#263349';
+          ctx.lineWidth = isSelected ? 2.4 : isInFamily || isHovered || isSearchMatch ? 1.9 : 1.1;
+          ctx.strokeStyle =
+            isSelected || isInFamily || isHovered || isSearchMatch ? accentColor : '#263349';
           ctx.stroke();
 
-          // Left era dot
-          ctx.beginPath();
-          ctx.arc(left + 14, node.y, 4.2, 0, Math.PI * 2);
-          ctx.fillStyle = accentColor;
-          ctx.fill();
+          // Lazy-load and render Fandom CDN thumbnail inside node card at high zoom (k >= 0.95)
+          let drewThumbnail = false;
+          if (isHighZoom && node.image) {
+            const loadedImg = requestNodeThumbnail(node.image);
+            if (loadedImg && loadedImg.complete && loadedImg.naturalWidth > 0) {
+              const thumbR = 11.5;
+              const thumbCx = left + 18;
+              const thumbCy = node.y;
+
+              ctx.save();
+              ctx.beginPath();
+              ctx.arc(thumbCx, thumbCy, thumbR, 0, Math.PI * 2);
+              ctx.closePath();
+              ctx.clip();
+
+              // Center-crop square slice from source image
+              const sw = loadedImg.naturalWidth;
+              const sh = loadedImg.naturalHeight;
+              const sMin = Math.min(sw, sh);
+              const sx = (sw - sMin) / 2;
+              const sy = (sh - sMin) / 2;
+              ctx.drawImage(
+                loadedImg,
+                sx,
+                sy,
+                sMin,
+                sMin,
+                thumbCx - thumbR,
+                thumbCy - thumbR,
+                thumbR * 2,
+                thumbR * 2
+              );
+              ctx.restore();
+
+              // Crisp accent border ring around thumbnail
+              ctx.beginPath();
+              ctx.arc(thumbCx, thumbCy, thumbR, 0, Math.PI * 2);
+              ctx.lineWidth = 1.4;
+              ctx.strokeStyle = accentColor;
+              ctx.stroke();
+              drewThumbnail = true;
+            }
+          }
+
+          if (!drewThumbnail) {
+            // Standard left era dot fallback
+            ctx.beginPath();
+            ctx.arc(left + 14, node.y, 4.2, 0, Math.PI * 2);
+            ctx.fillStyle = accentColor;
+            ctx.fill();
+          }
 
           // Pre-measured degree badge on right
           const badgeW = node.badgeW;
@@ -1809,65 +2192,137 @@ export default function App() {
           ctx.textBaseline = 'middle';
           ctx.fillText(node.degText, badgeX + badgeW / 2, node.y + 0.5);
 
-          // Pre-truncated title label
+          // Pre-truncated title label (shifted right when thumbnail is rendered)
           ctx.font = `${isSelected || isInFamily ? '700' : '500'} 12px Inter, system-ui, sans-serif`;
           ctx.fillStyle = isSelected ? '#ffffff' : isInFamily ? '#f8fafc' : '#e2e8f0';
           ctx.textAlign = 'left';
           ctx.textBaseline = 'middle';
-          ctx.fillText(node.truncatedLabel, left + 24, node.y + 0.5);
-        }
-      }
-
-      // Collision-avoiding hub labels when zoomed out
-      if (isZoomedOut && deferredLabels.length > 0) {
-        ctx.globalAlpha = 1;
-        deferredLabels.sort(
-          (a, b) =>
-            (b.isSelected || b.isHovered ? 100 : b.isInFamily ? 50 : b.node.degree) -
-            (a.isSelected || a.isHovered ? 100 : a.isInFamily ? 50 : a.node.degree)
-        );
-        const placedBoxes = [];
-        const fontSize = Math.max(11, Math.min(14, 11.5 / k));
-        ctx.font = `600 ${fontSize}px Inter, system-ui, sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'bottom';
-
-        for (let i = 0; i < deferredLabels.length; i++) {
-          const item = deferredLabels[i];
-          const textW = (item.node.labelWidth || 70) * (fontSize / 12) + 12 / k;
-          const textH = fontSize + 4 / k;
-          const lx = item.node.x;
-          const ly = item.node.y - item.radius - 4 / k;
-          const box = {
-            left: lx - textW / 2,
-            right: lx + textW / 2,
-            top: ly - textH,
-            bottom: ly,
-          };
-
-          const collides =
-            !item.isSelected &&
-            !item.isHovered &&
-            placedBoxes.some(
-              (b) =>
-                box.left < b.right &&
-                box.right > b.left &&
-                box.top < b.bottom &&
-                box.bottom > b.top
-            );
-          if (collides) continue;
-          placedBoxes.push(box);
-
-          ctx.fillStyle = 'rgba(9, 13, 22, 0.84)';
-          ctx.fillRect(box.left, box.top, textW, textH);
-          ctx.fillStyle =
-            item.isSelected || item.isHovered ? '#ffffff' : item.isInFamily ? '#f8fafc' : '#cbd5e1';
-          ctx.fillText(item.node.label, lx, ly - 1 / k);
+          ctx.fillText(
+            drewThumbnail ? node.truncatedLabelThumb : node.truncatedLabel,
+            drewThumbnail ? left + 35 : left + 24,
+            node.y + 0.5
+          );
         }
       }
 
       ctx.restore();
       ctx.globalAlpha = 1;
+
+      // 3b) Inverse-Zoom Readable Node Titles Above Dots (rendered in screen space for crisp typography)
+      if (isDotMode && deferredLabels.length > 0) {
+        deferredLabels.sort((a, b) => {
+          const scoreA =
+            (a.isSelected || a.isHovered ? 10000 : 0) +
+            (a.isInFamily || a.isSearchMatch ? 5000 : 0) +
+            (5 - a.node.tier) * 500 +
+            a.node.pagerank * 2000 +
+            a.node.degree * 0.5;
+          const scoreB =
+            (b.isSelected || b.isHovered ? 10000 : 0) +
+            (b.isInFamily || b.isSearchMatch ? 5000 : 0) +
+            (5 - b.node.tier) * 500 +
+            b.node.pagerank * 2000 +
+            b.node.degree * 0.5;
+          return scoreB - scoreA;
+        });
+
+        // Inverse-zoom screen font size: starts large (~14.5px) at far zoom (20%) and tapers to 11.5px by 80% zoom
+        const screenFontPx = Math.round(Math.max(11.5, Math.min(15, 15.5 - k * 5)) * 2) / 2;
+        ctx.font = `600 ${screenFontPx}px Inter, system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        const placedScreenBoxes: Array<{
+          left: number;
+          right: number;
+          top: number;
+          bottom: number;
+        }> = [];
+
+        for (let i = 0; i < deferredLabels.length; i++) {
+          const item = deferredLabels[i];
+          const screenX = item.node.x * k + camX;
+          const screenY = item.node.y * k + camY;
+          const dotScreenRadius = item.radius * k;
+
+          // Position label cleanly ABOVE the node dot
+          const labelBottomY = screenY - dotScreenRadius - 5;
+          const pillH = screenFontPx + 6;
+
+          // Deterministic char-based truncation keeps labels short without a per-frame measureText call
+          let pillW = (item.node.labelWidth || 70) * (screenFontPx / 12) + 12;
+          let labelText = item.node.label;
+          const maxPillW = Math.min(228, Math.max(120, width * 0.24));
+          if (pillW > maxPillW) {
+            const allowedChars = Math.max(4, Math.floor(labelText.length * (maxPillW / pillW)));
+            labelText = `${labelText.slice(0, Math.max(3, allowedChars - 1))}…`;
+            pillW = maxPillW;
+          }
+
+          const boxLeft = screenX - pillW / 2;
+          const boxRight = screenX + pillW / 2;
+          const boxTop = labelBottomY - pillH;
+          const boxBottom = labelBottomY;
+
+          // Tight screen-bounds frustum check for labels
+          if (boxRight < 0 || boxLeft > width || boxBottom < 56 || boxTop > height) {
+            continue;
+          }
+
+          const collides =
+            !item.isSelected &&
+            !item.isHovered &&
+            placedScreenBoxes.some(
+              (b) =>
+                boxLeft < b.right + 4 &&
+                boxRight > b.left - 4 &&
+                boxTop < b.bottom + 2 &&
+                boxBottom > b.top - 2
+            );
+          if (collides) continue;
+          placedScreenBoxes.push({
+            left: boxLeft,
+            right: boxRight,
+            top: boxTop,
+            bottom: boxBottom,
+          });
+
+          const isDimmedLabel =
+            hasSelection &&
+            !item.isInFamily &&
+            !item.isSelected &&
+            !item.isHovered &&
+            !item.isSearchMatch;
+
+          ctx.globalAlpha = isDimmedLabel ? 0.35 : 1;
+          ctx.fillStyle =
+            item.isSelected || item.isHovered
+              ? 'rgba(30, 27, 75, 0.92)'
+              : 'rgba(9, 13, 22, 0.86)';
+          ctx.fillRect(boxLeft, boxTop, pillW, pillH);
+
+          if (item.isSelected || item.isHovered || item.isInFamily || item.isSearchMatch) {
+            ctx.strokeStyle = item.isSelected
+              ? '#f472b6'
+              : item.isHovered || item.isSearchMatch
+              ? '#e879f9'
+              : 'rgba(148, 163, 184, 0.45)';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(boxLeft, boxTop, pillW, pillH);
+          }
+
+          ctx.fillStyle =
+            item.isSelected || item.isHovered
+              ? '#ffffff'
+              : item.isInFamily || item.isSearchMatch
+              ? '#f8fafc'
+              : item.node.tier === 1
+              ? '#f1f5f9'
+              : '#cbd5e1';
+          ctx.fillText(labelText, screenX, boxTop + pillH / 2 + 0.5);
+        }
+        ctx.globalAlpha = 1;
+      }
 
       // 4) Sticky Left-Edge Decade Badges in Screen Space
       for (let i = 0; i < currentLayout.swimlanes.length; i++) {
@@ -1946,7 +2401,7 @@ export default function App() {
   // 7. O(1) SPATIAL HASH HIT-TESTING & IMPERATIVE POINTER HANDLERS
   // ============================================================================
   const findNodeAtScreenPos = useCallback(
-    (clientX, clientY) => {
+    (clientX: number, clientY: number): PositionedNode | null => {
       const canvas = canvasRef.current;
       if (!canvas) return null;
       const rect = canvas.getBoundingClientRect();
@@ -1956,7 +2411,7 @@ export default function App() {
       const { x: camX, y: camY, scale: k } = cameraRef.current;
       const wx = (sx - camX) / k;
       const wy = (sy - camY) / k;
-      const isZoomedOut = k < 0.42;
+      const isDotMode = k < 0.8;
 
       // Query only the 1 spatial grid bucket under the cursor (O(1))
       const gx = Math.floor(wx / SPATIAL_CELL_SIZE);
@@ -1964,12 +2419,21 @@ export default function App() {
       const bucket = layout.spatialGrid.get(`${gx},${gy}`);
       if (!bucket || bucket.length === 0) return null;
 
-      let fallbackHit = null;
+      let fallbackHit: PositionedNode | null = null;
       for (let i = bucket.length - 1; i >= 0; i--) {
         const node = bucket[i];
-        let isHit = false;
+        const isImportant =
+          node.id === selectedId ||
+          lineage.allFamilyNodes.has(node.id) ||
+          searchMatchSet.has(node.id);
 
-        if (isZoomedOut) {
+        // Respect zoom-based tier culling during pointer hit-testing
+        if (getNodeTierAlpha(node.tier, k, isImportant) <= 0.05) {
+          continue;
+        }
+
+        let isHit: boolean;
+        if (isDotMode) {
           const hitR = Math.max(12 / k, node.dotRadius + 4);
           const dx = wx - node.x;
           const dy = wy - node.y;
@@ -1985,11 +2449,6 @@ export default function App() {
         }
 
         if (isHit) {
-          const isImportant =
-            node.id === selectedId ||
-            lineage.ancestorNodes.has(node.id) ||
-            lineage.descendantNodes.has(node.id) ||
-            lineage.peerNodes.has(node.id);
           if (isImportant) return node;
           if (!fallbackHit) fallbackHit = node;
         }
@@ -1997,61 +2456,61 @@ export default function App() {
 
       return fallbackHit;
     },
-    [layout.spatialGrid, selectedId, lineage]
+    [layout.spatialGrid, selectedId, lineage, searchMatchSet]
   );
 
   // Imperatively show/hide floating hover tooltip without triggering React state
-  const updateHoverTooltip = useCallback((node, clientX, clientY) => {
-    const tip = tooltipRef.current;
-    const canvas = canvasRef.current;
-    if (!tip) return;
-
-    if (!node) {
-      tip.style.opacity = '0';
-      tip.style.pointerEvents = 'none';
-      if (canvas) canvas.style.cursor = dragStateRef.current.active ? 'grabbing' : 'grab';
-      return;
-    }
-
-    if (canvas) canvas.style.cursor = 'pointer';
-    const left = Math.min(window.innerWidth - 250, clientX + 14);
-    const top = Math.min(window.innerHeight - 95, clientY + 14);
-    tip.style.transform = `translate3d(${left}px, ${top}px, 0)`;
-    tip.style.opacity = '1';
-
-    const dotEl = tip.querySelector('[data-tip-dot]');
-    const titleEl = tip.querySelector('[data-tip-title]');
-    const metaEl = tip.querySelector('[data-tip-meta]');
-    if (dotEl) dotEl.style.backgroundColor = node.eraColor;
-    if (titleEl) titleEl.textContent = node.label;
-    if (metaEl) {
-      metaEl.textContent = `${node.origin_raw || node.eraId} • ${node.parents.length} roots · ${node.children.length} branches`;
-    }
-  }, []);
-
-  const handleWheel = useCallback(
-    (e) => {
-      e.preventDefault();
+  const updateHoverTooltip = useCallback(
+    (node: PositionedNode | null, clientX: number, clientY: number) => {
+      const tip = tooltipRef.current;
       const canvas = canvasRef.current;
-      if (!canvas) return;
-      const rect = canvas.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
+      if (!tip) return;
 
-      const cam = cameraRef.current;
-      const factor = e.deltaY < 0 ? 1.16 : 1 / 1.16;
-      const newScale = Math.max(0.14, Math.min(3.5, cam.targetScale * factor));
+      if (!node) {
+        tip.style.opacity = '0';
+        tip.style.pointerEvents = 'none';
+        if (canvas) canvas.style.cursor = dragStateRef.current.active ? 'grabbing' : 'grab';
+        return;
+      }
 
-      const worldX = (mouseX - cam.targetX) / cam.targetScale;
-      const worldY = (mouseY - cam.targetY) / cam.targetScale;
+      if (canvas) canvas.style.cursor = 'pointer';
+      const left = Math.min(window.innerWidth - 250, clientX + 14);
+      const top = Math.min(window.innerHeight - 95, clientY + 14);
+      tip.style.transform = `translate3d(${left}px, ${top}px, 0)`;
+      tip.style.opacity = '1';
 
-      cam.targetScale = newScale;
-      cam.targetX = mouseX - worldX * newScale;
-      cam.targetY = mouseY - worldY * newScale;
-      dirtyRef.current = true;
+      const dotEl = tip.querySelector<HTMLElement>('[data-tip-dot]');
+      const titleEl = tip.querySelector<HTMLElement>('[data-tip-title]');
+      const metaEl = tip.querySelector<HTMLElement>('[data-tip-meta]');
+      if (dotEl) dotEl.style.backgroundColor = node.eraColor;
+      if (titleEl) titleEl.textContent = node.label;
+      if (metaEl) {
+        metaEl.textContent = `Tier ${node.tier} • ${node.origin_raw || node.eraId} • ${node.parents.length} roots · ${node.children.length} branches`;
+      }
     },
     []
   );
+
+  const handleWheel = useCallback((e: WheelEvent) => {
+    e.preventDefault();
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    const cam = cameraRef.current;
+    const factor = e.deltaY < 0 ? 1.16 : 1 / 1.16;
+    const newScale = Math.max(0.14, Math.min(3.5, cam.targetScale * factor));
+
+    const worldX = (mouseX - cam.targetX) / cam.targetScale;
+    const worldY = (mouseY - cam.targetY) / cam.targetScale;
+
+    cam.targetScale = newScale;
+    cam.targetX = mouseX - worldX * newScale;
+    cam.targetY = mouseY - worldY * newScale;
+    dirtyRef.current = true;
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -2060,7 +2519,7 @@ export default function App() {
     return () => canvas.removeEventListener('wheel', handleWheel);
   }, [handleWheel]);
 
-  const handlePointerDown = (e) => {
+  const handlePointerDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const cam = cameraRef.current;
     dragStateRef.current = {
       active: true,
@@ -2075,7 +2534,7 @@ export default function App() {
     if (canvasRef.current) canvasRef.current.style.cursor = 'grabbing';
   };
 
-  const handlePointerMove = (e) => {
+  const handlePointerMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const drag = dragStateRef.current;
     if (drag.active) {
       const dx = e.clientX - drag.startX;
@@ -2107,7 +2566,7 @@ export default function App() {
     updateHoverTooltip(hit, e.clientX, e.clientY);
   };
 
-  const handlePointerUp = (e) => {
+  const handlePointerUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const drag = dragStateRef.current;
     const wasClick = drag.active && !drag.moved;
     drag.active = false;
@@ -2126,7 +2585,7 @@ export default function App() {
     }
   };
 
-  const handleTouchStart = (e) => {
+  const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
     const cam = cameraRef.current;
     if (e.touches.length === 1) {
       const t = e.touches[0];
@@ -2141,7 +2600,7 @@ export default function App() {
         origCamScale: cam.scale,
       };
     } else if (e.touches.length === 2) {
-      const [t1, t2] = e.touches;
+      const [t1, t2] = [e.touches[0], e.touches[1]];
       const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
       dragStateRef.current = {
         active: true,
@@ -2156,7 +2615,7 @@ export default function App() {
     }
   };
 
-  const handleTouchMove = (e) => {
+  const handleTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
     const drag = dragStateRef.current;
     if (!drag.active) return;
     if (e.touches.length === 1 && drag.pinchDist === 0) {
@@ -2172,7 +2631,7 @@ export default function App() {
       cameraRef.current.targetY = ny;
       dirtyRef.current = true;
     } else if (e.touches.length === 2 && drag.pinchDist > 0) {
-      const [t1, t2] = e.touches;
+      const [t1, t2] = [e.touches[0], e.touches[1]];
       const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
       const scaleFactor = dist / drag.pinchDist;
       const newScale = Math.max(0.14, Math.min(3.5, drag.origCamScale * scaleFactor));
@@ -2197,7 +2656,7 @@ export default function App() {
     }
   };
 
-  const handleTouchEnd = (e) => {
+  const handleTouchEnd = (e: React.TouchEvent<HTMLCanvasElement>) => {
     const drag = dragStateRef.current;
     if (drag.active && !drag.moved && e.changedTouches.length === 1) {
       const t = e.changedTouches[0];
@@ -2212,7 +2671,7 @@ export default function App() {
     drag.active = false;
   };
 
-  const stepZoom = (multiplier) => {
+  const stepZoom = (multiplier: number) => {
     const container = containerRef.current;
     if (!container) return;
     const rect = container.getBoundingClientRect();
@@ -2414,7 +2873,7 @@ export default function App() {
             className="flex items-center gap-2 h-9 px-3.5 rounded-lg bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500 text-white text-xs font-semibold shadow-lg shadow-fuchsia-600/25 transition-all cursor-pointer"
           >
             <Upload size={14} />
-            <span className="hidden sm:inline">Upload aesthetics_data.json</span>
+            <span className="hidden sm:inline">Upload aesthetics_data_tiered.json</span>
             <span className="sm:hidden">Upload JSON</span>
           </button>
         </div>
@@ -2613,7 +3072,7 @@ export default function App() {
                   src={selectedNode.image}
                   alt={selectedNode.label}
                   referrerPolicy="no-referrer"
-                  onError={() => setImgError(true)}
+                  onError={() => setFailedSelectedImageId(selectedNode.id)}
                   className="w-full h-full object-cover object-center opacity-85"
                 />
               ) : (
@@ -2648,6 +3107,9 @@ export default function App() {
                     style={{ backgroundColor: selectedNode.eraColor }}
                   >
                     {selectedNode.eraId}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-slate-800/90 border border-slate-700 text-[10px] font-bold uppercase tracking-wider text-fuchsia-300">
+                    Tier {selectedNode.tier}
                   </span>
                   {selectedNode.year && (
                     <span className="text-xs font-semibold text-slate-300 flex items-center gap-1">
@@ -2847,7 +3309,7 @@ export default function App() {
             <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-fuchsia-500/20 flex items-center justify-center text-fuchsia-400">
               <FileJson size={28} />
             </div>
-            <h3 className="text-lg font-bold text-white">Drop aesthetics_data.json</h3>
+            <h3 className="text-lg font-bold text-white">Drop aesthetics_data_tiered.json</h3>
             <p className="text-xs text-slate-400 mt-1.5">
               Release to parse nodes, normalize eras, and render the full chronological tree
             </p>
