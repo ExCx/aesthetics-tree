@@ -1,6 +1,7 @@
 import type { RefObject } from 'react';
 import { GitBranch, Search, X } from 'lucide-react';
 import type { NormalizedNode } from '../graph/types';
+import { LineageLegend } from './LineageLegend';
 
 export interface TopBarProps {
   visibleNodeCount: number;
@@ -118,6 +119,7 @@ export function TopBar({
       </div>
 
       <div className="flex items-center gap-2 shrink-0">
+        <LineageLegend />
         <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-900/90 border border-slate-800 text-xs text-slate-300">
           <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0" />
           <span className="text-slate-400">

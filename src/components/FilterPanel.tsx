@@ -18,7 +18,7 @@ export interface FilterPanelProps {
   onShowOverlapsChange: (value: boolean) => void;
 }
 
-/** Left floating controls: visibility toggles, edge layers, lineage legend. */
+/** Left floating controls: visibility toggles and edge layers. */
 export function FilterPanel({
   isOpen,
   onToggle,
@@ -43,7 +43,7 @@ export function FilterPanel({
         className="self-start flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900/90 hover:bg-slate-800/90 backdrop-blur-md border border-slate-800 text-xs font-semibold text-slate-200 shadow-lg transition-colors"
       >
         <SlidersHorizontal size={13} className="text-fuchsia-400" />
-        <span>{isOpen ? 'Hide Controls' : 'Filters & Legend'}</span>
+        <span>{isOpen ? 'Hide Filters' : 'Filters'}</span>
       </button>
 
       {isOpen && (
@@ -137,28 +137,6 @@ export function FilterPanel({
                 className="accent-purple-400 rounded cursor-pointer"
               />
             </label>
-          </div>
-
-          <div className="space-y-1.5 pt-2 border-t border-slate-800/80">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-              Lineage Legend
-            </div>
-            <div className="flex items-center gap-2 text-slate-300">
-              <span className="w-2.5 h-2.5 rounded-full bg-fuchsia-400 ring-2 ring-fuchsia-400/30" />
-              <span>Selected Aesthetic</span>
-            </div>
-            <div className="flex items-center gap-2 text-slate-300">
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
-              <span>Upstream Ancestors</span>
-            </div>
-            <div className="flex items-center gap-2 text-slate-300">
-              <span className="w-2.5 h-2.5 rounded-full bg-cyan-400" />
-              <span>Downstream Descendants</span>
-            </div>
-            <div className="flex items-center gap-2 text-slate-300">
-              <span className="w-3 border-t-2 border-dashed border-purple-400" />
-              <span>Lateral Overlaps</span>
-            </div>
           </div>
         </div>
       )}
