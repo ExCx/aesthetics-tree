@@ -16,6 +16,8 @@ export interface InspectorDrawerProps {
   node: NormalizedNode | null;
   nodeMap: Map<string, NormalizedNode>;
   lineage: LineageSets;
+  /** Lead paragraph from `aesthetics_summaries.json`; absent until it loads. */
+  summary?: string;
   imageFailed: boolean;
   onImageError: () => void;
   onClose: () => void;
@@ -27,6 +29,7 @@ export function InspectorDrawer({
   node,
   nodeMap,
   lineage,
+  summary,
   imageFailed,
   onImageError,
   onClose,
@@ -164,6 +167,24 @@ export function InspectorDrawer({
                     ))}
                   </div>
                 )}
+              </div>
+            )}
+
+            {summary && (
+              <div>
+                <p className="text-xs leading-relaxed text-slate-300">{summary}</p>
+                <p className="mt-2 text-[10px] text-slate-500">
+                  Summary from{' '}
+                  <a
+                    href={node.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline decoration-slate-700 underline-offset-2 hover:text-slate-300"
+                  >
+                    Aesthetics Wiki
+                  </a>{' '}
+                  · CC BY-SA
+                </p>
               </div>
             )}
 

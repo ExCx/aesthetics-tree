@@ -16,6 +16,12 @@ export interface UseDatasetSourceArgs {
 
 export interface DatasetSource {
   rawDataset: RawDatasetInput;
+  /**
+   * Lead paragraph per node id, loaded after the graph so first paint is
+   * unaffected. Empty until the summaries artifact arrives (or forever, if it
+   * is missing: prose is a progressive enhancement).
+   */
+  summaries: Record<string, string>;
 }
 
 const EMPTY_DATASET: RawDatasetInput = { nodes: [], edges: [] };
@@ -24,6 +30,8 @@ const DATASET_URLS = [
   './aesthetics_data_tiered.json',
   './aesthetics_data.json',
 ];
+
+const SUMMARY_URL = './aesthetics_summaries.json';
 
 /**
  * Loads the scraper output from `public/` on mount.
@@ -38,10 +46,29 @@ export function useDatasetSource({
   onDatasetLoaded,
 }: UseDatasetSourceArgs): DatasetSource {
   const [rawDataset, setRawDataset] = useState<RawDatasetInput>(EMPTY_DATASET);
+  const [summaries, setSummaries] = useState<Record<string, string>>({});
 
   // Silent autoload of /aesthetics_data_tiered.json from public/ on mount (with fallback to /aesthetics_data.json)
   useEffect(() => {
     let cancelled = false;
+
+    // Fetched only once the graph is on screen: at ~500 KB it must never delay
+    // the map, and the inspector simply hides the paragraph until it resolves.
+    const loadSummaries = async () => {
+      try {
+        const res = await fetch(SUMMARY_URL);
+        if (!res.ok) return;
+        const data: unknown = await res.json();
+        if (!data || typeof data !== 'object' || Array.isArray(data)) return;
+        const next: Record<string, string> = {};
+        for (const [id, text] of Object.entries(data as Record<string, unknown>)) {
+          if (typeof text === 'string' && text.trim()) next[id] = text;
+        }
+        if (!cancelled) setSummaries(next);
+      } catch {
+        // Summaries are an enhancement: no paragraph, no error.
+      }
+    };
 
     const loadFromPublic = async () => {
       for (const url of DATASET_URLS) {
@@ -61,6 +88,7 @@ export function useDatasetSource({
               ).toLocaleString()} connections`,
               'success'
             );
+            void loadSummaries();
             return;
           }
         } catch {
@@ -78,5 +106,5 @@ export function useDatasetSource({
     };
   }, [dirtyRef, notify, onDatasetLoaded]);
 
-  return { rawDataset };
+  return { rawDataset, summaries };
 }

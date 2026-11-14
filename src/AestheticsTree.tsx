@@ -102,7 +102,7 @@ export default function AestheticsTree() {
     setSelectedId(null);
   }, []);
 
-  const { rawDataset } = useDatasetSource({
+  const { rawDataset, summaries } = useDatasetSource({
     notify: triggerToast,
     dirtyRef,
     onDatasetLoaded,
@@ -376,6 +376,7 @@ export default function AestheticsTree() {
         node={selectedNode}
         nodeMap={graph.nodeMap}
         lineage={lineage}
+        summary={selectedNode ? summaries[selectedNode.id] : undefined}
         imageFailed={imgError}
         onImageError={handleInspectorImageError}
         onClose={clearSelection}
