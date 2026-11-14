@@ -8,7 +8,7 @@ import type {
   LineageSets,
   PositionedNode,
 } from '../graph/types';
-import { zoomCameraAt } from './camera';
+import { clampCameraToBounds, zoomCameraAt } from './camera';
 import { findNodeAtScreenPos } from './hitTest';
 
 export interface UseCanvasInteractionsArgs {
@@ -62,6 +62,22 @@ export function useCanvasInteractions({
   onSelectNode,
   onClearSelection,
 }: UseCanvasInteractionsArgs): CanvasInteractionHandlers {
+  const { bounds } = layout;
+
+  // Keeps every user-driven pan/zoom inside the graph bounds so the canvas can
+  // never be dragged into a blank void.
+  const clampToBounds = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    clampCameraToBounds(
+      cameraRef.current,
+      bounds,
+      { width: rect.width, height: rect.height },
+      Boolean(selectedId)
+    );
+  }, [containerRef, cameraRef, bounds, selectedId]);
+
   const hitTest = useCallback(
     (clientX: number, clientY: number): PositionedNode | null => {
       const canvas = canvasRef.current;
@@ -127,9 +143,10 @@ export function useCanvasInteractions({
         mouseY,
         e.deltaY < 0 ? WHEEL_ZOOM_STEP : 1 / WHEEL_ZOOM_STEP
       );
+      clampToBounds();
       dirtyRef.current = true;
     },
-    [canvasRef, cameraRef, dirtyRef]
+    [canvasRef, cameraRef, clampToBounds, dirtyRef]
   );
 
   useEffect(() => {
@@ -172,6 +189,11 @@ export function useCanvasInteractions({
         cameraRef.current.y = ny;
         cameraRef.current.targetX = nx;
         cameraRef.current.targetY = ny;
+        clampToBounds();
+        // Re-anchor at the clamped position so the pointer keeps hold of the
+        // canvas after hitting a bound (no dead zone when reversing direction).
+        drag.origCamX = cameraRef.current.x - dx;
+        drag.origCamY = cameraRef.current.y - dy;
         dirtyRef.current = true;
 
         if (hoveredIdRef.current !== null) {
@@ -189,7 +211,7 @@ export function useCanvasInteractions({
       }
       updateHoverTooltip(hit, e.clientX, e.clientY);
     },
-    [cameraRef, dirtyRef, dragStateRef, hitTest, hoveredIdRef, updateHoverTooltip]
+    [cameraRef, clampToBounds, dirtyRef, dragStateRef, hitTest, hoveredIdRef, updateHoverTooltip]
   );
 
   const handlePointerUp = useCallback(
@@ -270,6 +292,9 @@ export function useCanvasInteractions({
         cameraRef.current.y = ny;
         cameraRef.current.targetX = nx;
         cameraRef.current.targetY = ny;
+        clampToBounds();
+        drag.origCamX = cameraRef.current.x - dx;
+        drag.origCamY = cameraRef.current.y - dy;
         dirtyRef.current = true;
       } else if (e.touches.length === 2 && drag.pinchDist > 0) {
         const [t1, t2] = [e.touches[0], e.touches[1]];
@@ -293,13 +318,14 @@ export function useCanvasInteractions({
           targetY: ny,
           targetScale: newScale,
         };
+        clampToBounds();
         if (zoomTextRef.current) {
           zoomTextRef.current.textContent = `${Math.round(newScale * 100)}%`;
         }
         dirtyRef.current = true;
       }
     },
-    [cameraRef, dirtyRef, dragStateRef, zoomTextRef]
+    [cameraRef, clampToBounds, dirtyRef, dragStateRef, zoomTextRef]
   );
 
   const handleTouchEnd = useCallback(
@@ -325,9 +351,10 @@ export function useCanvasInteractions({
       if (!container) return;
       const rect = container.getBoundingClientRect();
       zoomCameraAt(cameraRef.current, rect.width / 2, rect.height / 2, multiplier);
+      clampToBounds();
       dirtyRef.current = true;
     },
-    [containerRef, cameraRef, dirtyRef]
+    [containerRef, cameraRef, clampToBounds, dirtyRef]
   );
 
   return {

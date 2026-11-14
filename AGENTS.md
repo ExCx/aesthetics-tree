@@ -203,6 +203,14 @@ Preserve all styling and interaction behaviour:
 - Active-lineage-only edges: **do not** re-introduce ambient background edges at any zoom level.
 - Dot→card LOD at `k >= 0.80`, thumbnails at `k >= 0.95`, inverse-zoom titles above dots with collision priority Selected/Hovered → Lineage/Search → Tier 1 → Tier 2 → PageRank.
 
+### 7. Bounded camera
+The map must never be pannable into a blank void:
+- `canvas/camera.ts` owns `computePanLimits` / `clampCameraToBounds`; `PAN_MIN_VISIBLE_FRACTION` (0.5) is the minimum viewport overlap with `layout.bounds`.
+- Call `clampCameraToBounds` after **every** user-driven camera mutation: wheel zoom, button zoom, mouse drag, single-finger pan, pinch, `fitToScreen` and `focusNode`.
+- Limits use the same `availableViewport` as fit/focus, so a fitted graph stays exactly centred instead of being nudged.
+- `clampValue` maps non-finite input to a limit: a `NaN`/`Infinity` camera can never persist.
+- Drag handlers re-anchor `origCamX`/`origCamY` after clamping to avoid a dead zone when reversing direction at a bound.
+
 ## Engineering Rules
 
 - `tsconfig.app.json` enables `verbatimModuleSyntax`, `noUnusedLocals`, `noUnusedParameters` and `erasableSyntaxOnly`.

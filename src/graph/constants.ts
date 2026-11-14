@@ -35,6 +35,12 @@ export const FOCUS_MAX_SCALE = 1.35;
 
 /** Header height reserved at the top of the viewport when fitting/focusing. */
 export const HEADER_HEIGHT = 56;
+/**
+ * Minimum fraction of the available viewport that must still overlap the graph
+ * bounds while panning. 0.5 lets a node at the outermost edge be centred while
+ * making it impossible to drag the map into a fully blank screen.
+ */
+export const PAN_MIN_VISIBLE_FRACTION = 0.5;
 /** Width of the right-hand inspector drawer on desktop. */
 export const DRAWER_WIDTH = 380;
 /** Viewport width above which the drawer offset is applied. */

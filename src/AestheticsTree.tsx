@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { normalizeGraphDataset } from './data/normalizeGraph';
 import {
+  clampCameraToBounds,
   computeFitView,
   computeFocusView,
   createCameraState,
@@ -177,6 +178,12 @@ export default function AestheticsTree() {
           zoomTextRef.current.textContent = `${Math.round(target.scale * 100)}%`;
         }
       }
+      clampCameraToBounds(
+        cameraRef.current,
+        layout.bounds,
+        { width: rect.width, height: rect.height },
+        Boolean(selectedId)
+      );
       dirtyRef.current = true;
     },
     [layout.bounds, selectedId]
@@ -196,9 +203,16 @@ export default function AestheticsTree() {
         cameraRef.current.targetScale
       );
       setCameraTarget(cameraRef.current, target);
+      // Focusing always selects the node, so the drawer width is reserved.
+      clampCameraToBounds(
+        cameraRef.current,
+        layout.bounds,
+        { width: rect.width, height: rect.height },
+        true
+      );
       dirtyRef.current = true;
     },
-    [layout.positionedMap]
+    [layout.bounds, layout.positionedMap]
   );
 
   useEffect(() => {

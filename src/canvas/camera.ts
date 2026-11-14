@@ -9,6 +9,7 @@ import {
   INITIAL_SCALE,
   MAX_SCALE,
   MIN_SCALE,
+  PAN_MIN_VISIBLE_FRACTION,
 } from '../graph/constants';
 import type { CameraState, LayoutBounds } from '../graph/types';
 
@@ -25,6 +26,14 @@ export interface CameraTarget {
   x: number;
   y: number;
   scale: number;
+}
+
+/** Allowed camera translation (screen px) that keeps the graph on screen. */
+export interface PanLimits {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
 }
 
 export function createCameraState(scale: number = INITIAL_SCALE): CameraState {
@@ -131,4 +140,75 @@ export function snapCamera(camera: CameraState, target: CameraTarget): void {
   camera.targetX = target.x;
   camera.targetY = target.y;
   camera.targetScale = target.scale;
+}
+
+/**
+ * Allowed camera translation along one axis.
+ *
+ * The visible world span `viewportScreen / scale` must overlap the content
+ * range by at least `PAN_MIN_VISIBLE_FRACTION` of itself (capped at the content
+ * extent, so a fully-fitted graph simply cannot be panned off screen).
+ *
+ * @param contentMin/contentMax content range in world units
+ * @param offsetScreen  screen coordinate where the available area starts
+ * @param viewportScreen size of the available area in screen px
+ */
+function axisCameraRange(
+  contentMin: number,
+  contentMax: number,
+  offsetScreen: number,
+  viewportScreen: number,
+  scale: number
+): { min: number; max: number } {
+  const contentExtent = Math.max(1, contentMax - contentMin);
+  const viewWorld = viewportScreen / scale;
+  const minOverlap = Math.min(contentExtent, viewWorld * PAN_MIN_VISIBLE_FRACTION);
+
+  const min = offsetScreen - (contentMax - minOverlap) * scale;
+  const max = offsetScreen + viewportScreen - (contentMin + minOverlap) * scale;
+  return min <= max ? { min, max } : { min: max, max: min };
+}
+
+/**
+ * Camera translation limits that stop the user from panning into an empty void.
+ * Uses the same available viewport as `computeFitView`, so a fitted graph
+ * remains exactly centred instead of being nudged by the clamp.
+ */
+export function computePanLimits(
+  bounds: LayoutBounds,
+  viewport: ViewportSize,
+  scale: number,
+  hasSelection: boolean
+): PanLimits {
+  const k = Number.isFinite(scale) && scale > 0 ? scale : INITIAL_SCALE;
+  const { availW, availH } = availableViewport(viewport, hasSelection);
+  const x = axisCameraRange(bounds.minX, bounds.maxX, 0, availW, k);
+  const y = axisCameraRange(bounds.minY, bounds.maxY, HEADER_HEIGHT, availH, k);
+  return { minX: x.min, maxX: x.max, minY: y.min, maxY: y.max };
+}
+
+function clampValue(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, value));
+}
+
+/**
+ * Clamps both the eased camera and its animation target into `bounds`.
+ * Called after every user-driven pan/zoom so no gesture can escape the graph.
+ */
+export function clampCameraToBounds(
+  camera: CameraState,
+  bounds: LayoutBounds,
+  viewport: ViewportSize,
+  hasSelection: boolean
+): void {
+  const current = computePanLimits(bounds, viewport, camera.scale, hasSelection);
+  // `clampValue` maps non-finite input to the lower limit, so a poisoned camera
+  // can never keep a NaN transform.
+  camera.x = clampValue(camera.x, current.minX, current.maxX);
+  camera.y = clampValue(camera.y, current.minY, current.maxY);
+
+  const target = computePanLimits(bounds, viewport, camera.targetScale, hasSelection);
+  camera.targetX = clampValue(camera.targetX, target.minX, target.maxX);
+  camera.targetY = clampValue(camera.targetY, target.minY, target.maxY);
 }
