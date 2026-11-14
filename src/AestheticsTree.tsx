@@ -115,10 +115,14 @@ export default function AestheticsTree() {
         e.preventDefault();
         searchInputRef.current?.focus();
       } else if (e.key === 'Escape') {
+        // An active query consumes Escape; with the input focused but empty
+        // (e.g. just after picking a result) Escape clears the selection in the
+        // same press instead of needing a second one.
         if (searchFocused) {
           setSearchFocused(false);
           searchInputRef.current?.blur();
-        } else {
+        }
+        if (searchQuery.trim() === '') {
           setSelectedId(null);
           setFocusLineageOnly(false);
         }
@@ -126,7 +130,7 @@ export default function AestheticsTree() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [searchFocused]);
+  }, [searchFocused, searchQuery]);
 
   // Normalize full graph
   const graph = useMemo(() => normalizeGraphDataset(rawDataset), [rawDataset]);
@@ -296,7 +300,11 @@ export default function AestheticsTree() {
   const handleSelectSearchResult = useCallback(
     (item: NormalizedNode) => {
       setSearchQuery('');
-      setSearchFocused(false);
+      // The result button uses onMouseDown + preventDefault, so the input keeps
+      // DOM focus and `onFocus` will not fire again. Do not clear `searchFocused`
+      // here: the empty query already hides the dropdown, and leaving the flag
+      // true is what lets the next keystroke show results again.
+      searchInputRef.current?.focus();
       if (item.eraId === 'Undated') setShowUndated(true);
       if (item.degree === 0) setHideIsolated(false);
       setFocusLineageOnly(false);
