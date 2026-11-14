@@ -8,14 +8,15 @@ This repository has two distinct parts:
    - `src/AestheticsTree.tsx` is a **thin orchestrator** (~400 lines): low-frequency React UI state, memoized graph/lineage/layout, hook wiring, and JSX composition. It must not accumulate rendering, layout or pointer-handling logic.
    - `src/App.tsx` simply renders `<AestheticsTree />`.
    - `src/App.css` and `src/assets/` are unused Vite template leftovers; styling uses Tailwind v4 (`@import "tailwindcss";` in `src/index.css`).
-2. **Scraper (`aesthetics-scraper/`)**: A standalone Python 3.12 script (`fetch_aesthetics.py`) that queries the Aesthetics Wiki MediaWiki API (`aesthetics.fandom.com/api.php`), parses `Template:Aesthetic` infoboxes, resolves redirects/image CDN URLs, computes NetworkX PageRank centrality tiers (1–4), and outputs `aesthetics_data_tiered.json`.
+2. **Scraper (`aesthetics-scraper/`)**: A standalone Python 3.12 script (`fetch_aesthetics.py`) that queries the Aesthetics Wiki MediaWiki API (`aesthetics.fandom.com/api.php`), parses `Template:Aesthetic` infoboxes, extracts each article's lead paragraph, resolves redirects/image CDN URLs, computes NetworkX PageRank centrality tiers (1–4), and outputs `aesthetics_data_tiered.json` plus `aesthetics_summaries.json`.
 
 ## Folder Layout
 
 ```text
 /
 ├── public/
-│   └── aesthetics_data_tiered.json   # Auto-loaded scraper output on mount
+│   ├── aesthetics_data_tiered.json   # Auto-loaded scraper output on mount
+│   └── aesthetics_summaries.json     # Lead paragraphs, fetched after the graph is live
 ├── src/
 │   ├── AestheticsTree.tsx            # Thin orchestrator: UI state + hook wiring + layout shell
 │   ├── App.tsx                       # Root wrapper
@@ -48,20 +49,20 @@ This repository has two distinct parts:
 │   │   └── useCanvasInteractions.ts  # Wheel/drag/click/touch/pinch + imperative tooltip
 │   │
 │   ├── hooks/
-│   │   └── useDatasetSource.ts       # public/ autoload only (no sample / upload / drop)
+│   │   └── useDatasetSource.ts       # public/ autoload (graph, then lead summaries)
 │   │
 │   └── components/
 │       ├── TopBar.tsx                # Header, search field + results dropdown, node counter
 │       ├── FilterPanel.tsx           # Scrollable filter body + collapse toggle
 │       ├── LineageLegend.tsx         # Always-visible legend, top bar beside the node counter
 │       ├── MapControls.tsx           # Zoom in/out + zoom readout + fit view
-│       ├── InspectorDrawer.tsx       # Right slide-over inspector
+│       ├── InspectorDrawer.tsx       # Right slide-over inspector (lead paragraph + fields)
 │       └── Overlays.tsx              # HoverTooltip + Toast
 │
 └── aesthetics-scraper/
     ├── Dockerfile                    # Python 3.12 container
     ├── requirements.txt              # requests, mwparserfromhell, networkx
-    └── fetch_aesthetics.py           # MediaWiki API scraper + PageRank tiering
+    └── fetch_aesthetics.py           # MediaWiki API scraper + lead summaries + PageRank tiering
 ```
 
 ### Where new code goes
@@ -75,6 +76,7 @@ This repository has two distinct parts:
 | A new zoom/LOD threshold | `graph/tiering.ts` (never inline in a draw call) |
 | A new camera movement | `canvas/camera.ts` (pure), then call it from a hook |
 | A new panel/button/drawer section | `components/` |
+| Prose/annotation loaded beside the data | new artifact + `useDatasetSource.ts`, consumed as a lookup (never merged into `NormalizedGraph`) |
 | New UI state | `AestheticsTree.tsx` — and only if it is low-frequency |
 
 ### Data flow
@@ -89,6 +91,9 @@ rawDataset ──normalizeGraphDataset──▶ NormalizedGraph
 sceneRef {layout, selection, lineage, search, toggles} ──▶ useCanvasEngine ──▶ renderScene
                                                                               │
                                                               hitTest (same tier rules)
+
+aesthetics_summaries.json ──▶ Record<id, paragraph> ──▶ InspectorDrawer (lookup only;
+                                                            never part of the graph)
 ```
 
 ## `aesthetics_data_tiered.json` Schema
@@ -130,6 +135,14 @@ sceneRef {layout, selection, lineage, search, toggles} ──▶ useCanvasEngine
 - **Dual JSON format support**: `normalizeGraphDataset` (`src/data/normalizeGraph.ts`) accepts either `{ nodes: [...], edges: [...] }` or a flat array of node objects `[...]` with inline `subgenres`, `related`, and `overlaps` arrays. If an untiered dataset is loaded, it automatically computes fallback `tier` (1–4) and `pagerank` values from node degree percentiles.
 - **Data Safety (`"year": null`)**: Many wiki articles lack an origin year (`"year": null`, bucketed into `"Undated"`). All layout and canvas math explicitly guards against `NaN` coordinates.
 
+## `aesthetics_summaries.json` Schema
+
+A flat `{ "<node id>": "<lead paragraph>" }` map, written by the same scraper run as the tiered dataset (so both stay in step on the daily update). It is fetched **after** the graph is on screen and merged as a lookup only — it never touches `NormalizedGraph`, layout or the canvas.
+
+- **Provenance**: text is the article lead (CC BY-SA), so the inspector renders a `Summary from Aesthetics Wiki · CC BY-SA` attribution under it. Keep that link whenever prose is displayed.
+- **Extraction rule** (`extract_summary` in `fetch_aesthetics.py`): templates/tables are stripped textually first (a malformed tag inside an infobox otherwise hides the template from `Wikicode.remove`), the lead is cut at the first heading, hatnotes and `#REDIRECT` pages are skipped, and **a first paragraph shorter than `SUMMARY_SHORT_PARAGRAPH_CHARS` (220) is joined with the next one** — this is the fix for articles that open with a one-line stub. Output is capped at 650 chars on a sentence boundary.
+- **Coverage**: roughly 99% of nodes have a summary; redirects, deleted pages and prose-less stubs are simply absent, and the inspector hides the paragraph when the key is missing. Never error on a missing key.
+
 ## Commands
 
 ### Frontend (Root)
@@ -140,6 +153,7 @@ sceneRef {layout, selection, lineage, search, toggles} ──▶ useCanvasEngine
 - **Tests**: No test runner or test suite is configured.
 
 ### Scraper (`aesthetics-scraper/`)
+Writes two files into `OUTPUT_DIR`: `aesthetics_data_tiered.json` (graph) and `aesthetics_summaries.json` (lead paragraphs) — always from the same run.
 - **Docker**:
   ```bash
   docker build -t aesthetics-scraper ./aesthetics-scraper
@@ -199,6 +213,7 @@ Preserve all styling and interaction behaviour:
 - Lineage depth slider (default **1** = direct roots/successors only; stops 2, 3, 4 and **All** = unlimited). `computeLineage` owns the BFS cap; never re-implement depth filtering in a draw call.
 - The lineage legend lives in the top bar, immediately left of the node counter. The collapsible filter body is height-bounded to `bottom-[5.5rem]` (clear of the zoom cluster) and scrolls internally. Keep `pointer-events-none` on the panel's full-height column so the empty area beside the toggle never blocks canvas panning.
 - Dataset is loaded from `public/` only: there is no built-in sample, no upload button, no drag & drop and no reset-to-sample. Do not re-introduce them.
+- The inspector shows the article's lead paragraph immediately above **Key Colours**, with the CC BY-SA attribution directly under it. The paragraph comes from `aesthetics_summaries.json`, which is fetched only after the graph loads: it must never gate first paint, never trigger a relayout, and must be silently omitted when the key or the file is missing.
 - Right-hand inspector drawer slide-over (drawer width `380px`, desktop breakpoint `768px`) and the `fitToScreen`/`focusNode` offsets that account for it.
 - Active-lineage-only edges: **do not** re-introduce ambient background edges at any zoom level.
 - Dot→card LOD at `k >= 0.80`, thumbnails at `k >= 0.95`, inverse-zoom titles above dots with collision priority Selected/Hovered → Lineage/Search → Tier 1 → Tier 2 → PageRank.
