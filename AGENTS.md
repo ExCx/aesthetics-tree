@@ -153,17 +153,20 @@ A flat `{ "<node id>": "<lead paragraph>" }` map, written by the same scraper ru
 - **Tests**: No test runner or test suite is configured.
 
 ### Scraper (`aesthetics-scraper/`)
-Writes two files into `OUTPUT_DIR`: `aesthetics_data_tiered.json` (graph) and `aesthetics_summaries.json` (lead paragraphs) — always from the same run.
-- **Docker**:
+Writes two tracked files into `OUTPUT_DIR`: `aesthetics_data_tiered.json` (graph) and `aesthetics_summaries.json` (lead paragraphs) — always from the same run. Both live in `public/`, which is committed (not gitignored) so a deploy has data without running the scraper.
+- **Default output**: `OUTPUT_DIR` is unset → the script writes to the repo's `public/` directory, resolved from the script location (so it works from any cwd in CI). An explicit `OUTPUT_DIR` still wins.
+- **Local Python**:
+  ```bash
+  pip install -r aesthetics-scraper/requirements.txt
+  python aesthetics-scraper/fetch_aesthetics.py
+  ```
+- **Docker** (the image sets `OUTPUT_DIR=/output`):
   ```bash
   docker build -t aesthetics-scraper ./aesthetics-scraper
   docker run --rm -v "$(pwd)/public:/output" aesthetics-scraper
   ```
-- **Local Python**:
-  ```bash
-  pip install -r aesthetics-scraper/requirements.txt
-  OUTPUT_DIR=./public python aesthetics-scraper/fetch_aesthetics.py
-  ```
+- **Overshoot guard**: before writing anything, `validate_scrape` exits with code `1` when the new node count is below the stricter of `MIN_NODES` (default `500`) and `MIN_RETENTION_RATIO` (default `0.5`, i.e. 50% of the dataset already in `OUTPUT_DIR`). A Fandom outage or API change therefore fails CI instead of overwriting the live data. Both files are written via a temp file + `os.replace`, so a crash cannot truncate them either.
+- **CI**: `.github/workflows/refresh-aesthetics-data.yml` runs the script daily (and on `workflow_dispatch`), then commits the two JSON files if they changed. Keep those paths tracked and out of `.gitignore`.
 
 ## Non-Negotiable Invariants
 

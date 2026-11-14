@@ -1,0 +1,49 @@
+name: Refresh aesthetics data
+
+on:
+  schedule:
+    # Daily, off-peak UTC. Fandom's API is slow, so avoid round hours.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-aesthetics-data
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: aesthetics-scraper/requirements.txt
+
+      - name: Install scraper dependencies
+        run: pip install -r aesthetics-scraper/requirements.txt
+
+      # Writes straight to public/ (the script's default), and exits non-zero
+      # when the scrape is anomalously small, so an outage fails the job
+      # instead of replacing the live dataset with empty data.
+      - name: Scrape into public/
+        run: python aesthetics-scraper/fetch_aesthetics.py
+
+      # The two JSON artifacts are tracked files, so the refresh shows up as a
+      # normal commit that the Vite build (and git history) can rely on.
+      - name: Commit refreshed JSON
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add public/aesthetics_data_tiered.json public/aesthetics_summaries.json
+          if git diff --cached --quiet; then
+            echo 'No dataset changes.'
+            exit 0
+          fi
+          git commit -m 'Refresh aesthetics dataset'
+          git push

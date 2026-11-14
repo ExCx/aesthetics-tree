@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import sys
 import time
 import mwparserfromhell
 import requests
@@ -8,7 +9,21 @@ import networkx as nx
 
 API_URL = "https://aesthetics.fandom.com/api.php"
 HEADERS = {"User-Agent": "AestheticsChronologyTree/2.0 (Educational Project)"}
-OUTPUT_DIR = os.environ.get("OUTPUT_DIR", ".")
+
+# Default straight into the Vite public/ folder, resolved from this file rather
+# than the cwd, so a CI checkout only has to run `python
+# aesthetics-scraper/fetch_aesthetics.py`. An explicit OUTPUT_DIR still wins
+# (the Docker image sets /output).
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(SCRIPT_DIR)
+OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "").strip() or os.path.join(REPO_ROOT, "public")
+
+# A sudden shrink means a Fandom outage or an API change, not a real wiki
+# purge. Refuse to write over the live data below these guard rails:
+#   MIN_NODES              absolute floor for a healthy scrape
+#   MIN_RETENTION_RATIO    fraction of the already-committed dataset to keep
+MIN_NODES = int(os.environ.get("MIN_NODES", "500"))
+MIN_RETENTION_RATIO = float(os.environ.get("MIN_RETENTION_RATIO", "0.5"))
 
 session = requests.Session()
 session.headers.update(HEADERS)
@@ -240,6 +255,60 @@ def resolve_image_urls(filenames, batch_size=50):
         time.sleep(0.3)
     return url_map
 
+def _existing_node_count(path):
+    """Node count of the dataset already on disk, or 0 if it is missing/unreadable."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return 0
+    if isinstance(data, dict):
+        nodes = data.get("nodes")
+        return len(nodes) if isinstance(nodes, list) else 0
+    return len(data) if isinstance(data, list) else 0
+
+def validate_scrape(node_count, output_dir):
+    """Exit non-zero instead of overwriting live data with a broken scrape.
+
+    The floor is the stricter of MIN_NODES and MIN_RETENTION_RATIO of the
+    dataset already in `output_dir`, so an empty or drastically truncated API
+    response fails CI while a genuine slow decline still gets through.
+    """
+    previous = _existing_node_count(os.path.join(output_dir, "aesthetics_data_tiered.json"))
+    retention_floor = int(previous * MIN_RETENTION_RATIO) if previous else 0
+    floor = max(MIN_NODES, retention_floor)
+
+    if node_count >= floor:
+        print(
+            f"      {node_count} nodes (floor {floor}: MIN_NODES={MIN_NODES}, "
+            f"{MIN_RETENTION_RATIO:.0%} of previous {previous})."
+        )
+        return
+
+    reason = "the scrape returned no nodes" if node_count == 0 else "the scrape returned anomalously few nodes"
+    print(
+        f"\nERROR: {reason}: {node_count} < {floor} "
+        f"(MIN_NODES={MIN_NODES}, {MIN_RETENTION_RATIO:.0%} of previous {previous}).\n"
+        f"Refusing to overwrite {output_dir}. Fandom is probably down or the API changed.",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+def write_json_atomic(path, payload):
+    """Write via a sibling temp file + rename, so a crash never truncates live data."""
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    tmp_path = f"{path}.tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
 def main():
     titles = get_all_aesthetic_titles()
     raw_pages = fetch_wikitext(titles)
@@ -287,6 +356,9 @@ def main():
                         seen_edges.add(edge_key)
                         edges.append({"source": title, "target": target_id, "type": edge_type})
 
+    print("      Validating scrape size before writing...")
+    validate_scrape(len(nodes), OUTPUT_DIR)
+
     print("[5/5] Running PageRank Centrality algorithm...")
     
     # 1. Build an undirected graph to measure total structural importance
@@ -323,17 +395,15 @@ def main():
         node["tier"] = tier_map[node["id"]]["tier"]
 
     output_path = os.path.join(OUTPUT_DIR, "aesthetics_data_tiered.json")
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(
-            {"stats": {"nodes": len(nodes), "edges": len(edges)}, "nodes": nodes, "edges": edges},
-            f, indent=2, ensure_ascii=False,
-        )
+    write_json_atomic(
+        output_path,
+        {"stats": {"nodes": len(nodes), "edges": len(edges)}, "nodes": nodes, "edges": edges},
+    )
 
     # Lead summaries live in their own artifact so the graph payload stays small
     # and the inspector can upgrade itself after first paint.
     summaries_path = os.path.join(OUTPUT_DIR, "aesthetics_summaries.json")
-    with open(summaries_path, "w", encoding="utf-8") as f:
-        json.dump(dict(sorted(summaries.items())), f, indent=2, ensure_ascii=False)
+    write_json_atomic(summaries_path, dict(sorted(summaries.items())))
 
     print(f"\nDone! Saved to {output_path}")
     print(f"Summaries: {len(summaries)}/{len(raw_pages)} articles -> {summaries_path}")
