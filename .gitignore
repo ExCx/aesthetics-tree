@@ -26,3 +26,7 @@ dist-ssr
 # Python scraper caches
 __pycache__/
 *.pyc
+
+# Wrangler / Workers local state
+.wrangler/
+.dev.vars*

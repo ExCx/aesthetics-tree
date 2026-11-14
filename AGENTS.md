@@ -152,6 +152,12 @@ A flat `{ "<node id>": "<lead paragraph>" }` map, written by the same scraper ru
 - **Lint**: `npm run lint` (ESLint 10 flat config with `eslint-plugin-react-hooks` v7 strict rules, including `react-hooks/refs`)
 - **Tests**: No test runner or test suite is configured.
 
+### Deployment (Cloudflare Workers Static Assets)
+- `wrangler.jsonc` is the source of truth: `assets.directory` is `./dist`, with SPA not-found handling. There is no `main` script; every request is a free static-asset request.
+- Workers Builds: production branch `master`, build command `npm run build`, deploy command `npx wrangler deploy`, build variable `NODE_VERSION=22`.
+- `public/_headers` sets immutable caching for `/assets/*`, 5-minute revalidation for the root JSON artifacts, and baseline security headers.
+- Do not add `@cloudflare/vite-plugin`: it relocates the client build to `dist/client` and generates its own Wrangler config.
+
 ### Scraper (`aesthetics-scraper/`)
 Writes two tracked files into `OUTPUT_DIR`: `aesthetics_data_tiered.json` (graph) and `aesthetics_summaries.json` (lead paragraphs) — always from the same run. Both live in `public/`, which is committed (not gitignored) so a deploy has data without running the scraper.
 - **Default output**: `OUTPUT_DIR` is unset → the script writes to the repo's `public/` directory, resolved from the script location (so it works from any cwd in CI). An explicit `OUTPUT_DIR` still wins.
