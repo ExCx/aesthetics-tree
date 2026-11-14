@@ -96,6 +96,119 @@ def parse_infobox(wikitext):
         "overlaps": get_links("overlaps_with"),
     }
 
+# --- Lead summary extraction -------------------------------------------------
+# The inspector shows the opening paragraph of each article. Extracting it here
+# adds no requests: `fetch_wikitext` already downloaded every page.
+
+SUMMARY_MAX_CHARS = 650
+SUMMARY_SHORT_PARAGRAPH_CHARS = 220
+SUMMARY_MIN_PARAGRAPH_CHARS = 24
+HATNOTE_PREFIXES = (
+    "not to be confused with",
+    "this article is about",
+    "this page is about",
+    "for other uses",
+    "redirects here",
+    "main article:",
+    "see also:",
+)
+NON_PROSE_TAGS = {"ref", "references", "gallery", "imagemap", "math", "score", "timeline", "table"}
+
+def _strip_balanced(text, opener, closer):
+    """Removes balanced spans textually so malformed HTML cannot hide them."""
+    out, depth, i = [], 0, 0
+    while i < len(text):
+        if text.startswith(opener, i):
+            depth += 1
+            i += len(opener)
+            continue
+        if text.startswith(closer, i):
+            if depth > 0: depth -= 1
+            i += len(closer)
+            continue
+        if depth == 0: out.append(text[i])
+        i += 1
+    return "".join(out)
+
+def _lead_plain_text(wikitext):
+    """Lead section of an article as plain text (template/table/link markup removed)."""
+    # Templates (infobox, hatnotes, citations) and tables go first, as raw
+    # spans: a malformed tag inside an infobox can make the template a nested
+    # node, which `Wikicode.remove` would silently refuse to delete.
+    text = _strip_balanced(wikitext, "{{", "}}")
+    text = _strip_balanced(text, "{|", "|}")
+
+    code = mwparserfromhell.parse(text)
+    first_heading = next(iter(code.filter_headings()), None)
+    if first_heading is not None:
+        try:
+            code = mwparserfromhell.wikicode.Wikicode(code.nodes[: code.nodes.index(first_heading)])
+        except ValueError:
+            pass
+
+    for tag in reversed(code.filter_tags(recursive=True)):
+        if str(tag.tag).strip().lower() in NON_PROSE_TAGS:
+            try: code.remove(tag)
+            except ValueError: pass
+    for link in reversed(code.filter_wikilinks(recursive=True)):
+        if str(link.title).strip().lower().startswith(("file:", "image:", "category:")):
+            try: code.remove(link)
+            except ValueError: pass
+
+    return code.strip_code(normalize=True, collapse=False)
+
+def _lead_paragraphs(plain):
+    paragraphs = []
+    for raw in re.split(r"\n\s*\n", plain):
+        cleaned = re.sub(r"[\u200b\xa0]", " ", raw)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        cleaned = re.sub(r"\(\s*(?:or|and)?\s*\)", "", cleaned)  # template-only parens
+        cleaned = re.sub(r"\s+([,.;:!?])", r"\1", cleaned)
+        cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+        if len(cleaned) < SUMMARY_MIN_PARAGRAPH_CHARS: continue
+        if cleaned.lower().startswith(HATNOTE_PREFIXES): continue
+        if "{{" in cleaned or "}}" in cleaned: continue
+        paragraphs.append(cleaned)
+    return paragraphs
+
+def _is_prose_block(text):
+    """True for a real paragraph, false for a flattened list or table remnant."""
+    return len(text) >= 40 and bool(re.search(r"[.!?…][\"'”’)\]]?$", text))
+
+def extract_summary(wikitext, max_chars=SUMMARY_MAX_CHARS):
+    """Opening paragraph of an article, or "" for redirects/stubs without prose.
+
+    Articles often open with a hatnote or a one-line stub, so a first paragraph
+    shorter than SUMMARY_SHORT_PARAGRAPH_CHARS is joined with the next one —
+    but only when that next block is prose, never a bullet list.
+    """
+    if not wikitext or re.match(r"^\s*#redirect", wikitext, re.IGNORECASE):
+        return ""
+
+    paragraphs = _lead_paragraphs(_lead_plain_text(wikitext))
+    if not paragraphs:
+        return ""
+
+    summary = paragraphs[0]
+    if (
+        len(summary) < SUMMARY_SHORT_PARAGRAPH_CHARS
+        and len(paragraphs) > 1
+        and _is_prose_block(paragraphs[1])
+    ):
+        summary = f"{summary} {paragraphs[1]}"
+
+    if len(summary) > max_chars:
+        window = summary[:max_chars]
+        cut = max(window.rfind(". "), window.rfind("! "), window.rfind("? "))
+        if cut >= max_chars * 0.5:
+            summary = window[: cut + 1]
+        else:
+            summary = window.rsplit(" ", 1)[0].rstrip(" ,;:—-") + "…"
+    elif summary.endswith(":"):
+        # A lead-in to a bullet list ("...such as:") reads better as a truncation.
+        summary = summary[:-1].rstrip() + "…"
+    return summary
+
 def resolve_redirects(all_linked_titles, batch_size=50):
     print("[3/5] Resolving page redirects...")
     unique = sorted(set(all_linked_titles))
@@ -132,11 +245,14 @@ def main():
     raw_pages = fetch_wikitext(titles)
 
     parsed_pages = {}
+    summaries = {}
     all_edge_targets, all_images = [], []
 
     for title, wikitext in raw_pages.items():
         info = parse_infobox(wikitext)
         parsed_pages[title] = info
+        summary = extract_summary(wikitext)
+        if summary: summaries[title] = summary
         for field in ["subgenres", "related", "overlaps"]: all_edge_targets.extend(info.get(field, []))
         if info.get("image_file"): all_images.append(info["image_file"])
 
@@ -213,7 +329,14 @@ def main():
             f, indent=2, ensure_ascii=False,
         )
 
+    # Lead summaries live in their own artifact so the graph payload stays small
+    # and the inspector can upgrade itself after first paint.
+    summaries_path = os.path.join(OUTPUT_DIR, "aesthetics_summaries.json")
+    with open(summaries_path, "w", encoding="utf-8") as f:
+        json.dump(dict(sorted(summaries.items())), f, indent=2, ensure_ascii=False)
+
     print(f"\nDone! Saved to {output_path}")
+    print(f"Summaries: {len(summaries)}/{len(raw_pages)} articles -> {summaries_path}")
     print("\nSample Tiers Assigned:")
     for i in range(1, 5):
         sample = [n[0] for n in sorted_by_pr if tier_map[n[0]]["tier"] == i][:3]

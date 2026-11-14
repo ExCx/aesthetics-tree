@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Python scraper caches
+__pycache__/
+*.pyc
