@@ -52,7 +52,8 @@ This repository has two distinct parts:
 │   │
 │   └── components/
 │       ├── TopBar.tsx                # Header, search field + results dropdown, node counter
-│       ├── FilterPanel.tsx           # Visibility/edge toggles + lineage legend
+│       ├── FilterPanel.tsx           # Scrollable filter body + collapse toggle
+│       ├── LineageLegend.tsx         # Always-visible legend, top bar beside the node counter
 │       ├── MapControls.tsx           # Zoom in/out + zoom readout + fit view
 │       ├── InspectorDrawer.tsx       # Right slide-over inspector
 │       └── Overlays.tsx              # HoverTooltip + Toast
@@ -195,6 +196,7 @@ Preserve all styling and interaction behaviour:
 - Tailwind v4 utility classes in `components/`; no CSS-in-JS, no new stylesheet.
 - Keyboard shortcuts (`/` focus search, `Escape` clears/handles search then selection).
 - Fuzzy search dropdown + search lineage spotlighting.
+- The lineage legend lives in the top bar, immediately left of the node counter. The collapsible filter body is height-bounded to `bottom-[5.5rem]` (clear of the zoom cluster) and scrolls internally. Keep `pointer-events-none` on the panel's full-height column so the empty area beside the toggle never blocks canvas panning.
 - Dataset is loaded from `public/` only: there is no built-in sample, no upload button, no drag & drop and no reset-to-sample. Do not re-introduce them.
 - Right-hand inspector drawer slide-over (drawer width `380px`, desktop breakpoint `768px`) and the `fitToScreen`/`focusNode` offsets that account for it.
 - Active-lineage-only edges: **do not** re-introduce ambient background edges at any zoom level.

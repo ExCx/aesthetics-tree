@@ -18,7 +18,11 @@ export interface FilterPanelProps {
   onShowOverlapsChange: (value: boolean) => void;
 }
 
-/** Left floating controls: visibility toggles and edge layers. */
+/**
+ * Left floating controls: a filter toggle with the collapsible filter body
+ * underneath. The column is height-bounded so the body scrolls instead of
+ * overlapping the zoom controls.
+ */
 export function FilterPanel({
   isOpen,
   onToggle,
@@ -37,17 +41,19 @@ export function FilterPanel({
   onShowOverlapsChange,
 }: FilterPanelProps) {
   return (
-    <aside className="absolute top-16 left-4 z-20 flex flex-col gap-2 max-w-[260px]">
-      <button
-        onClick={onToggle}
-        className="self-start flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900/90 hover:bg-slate-800/90 backdrop-blur-md border border-slate-800 text-xs font-semibold text-slate-200 shadow-lg transition-colors"
-      >
-        <SlidersHorizontal size={13} className="text-fuchsia-400" />
-        <span>{isOpen ? 'Hide Filters' : 'Filters'}</span>
-      </button>
+    <aside className="pointer-events-none absolute top-16 bottom-[5.5rem] left-4 z-20 flex max-w-[320px] flex-col items-start gap-2">
+      <div className="pointer-events-auto flex items-center gap-2">
+        <button
+          onClick={onToggle}
+          className="flex shrink-0 items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900/90 hover:bg-slate-800/90 backdrop-blur-md border border-slate-800 text-xs font-semibold text-slate-200 shadow-lg transition-colors"
+        >
+          <SlidersHorizontal size={13} className="text-fuchsia-400" />
+          <span>{isOpen ? 'Hide Filters' : 'Filters'}</span>
+        </button>
+      </div>
 
       {isOpen && (
-        <div className="bg-slate-900/88 backdrop-blur-xl border border-slate-800/90 rounded-2xl p-3.5 shadow-2xl space-y-3.5 text-xs">
+        <div className="pointer-events-auto w-[260px] min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain bg-slate-900/88 backdrop-blur-xl border border-slate-800/90 rounded-2xl p-3.5 shadow-2xl space-y-3.5 text-xs [scrollbar-width:thin] [scrollbar-color:rgba(51,65,85,0.9)_transparent]">
           <div>
             <button
               disabled={!hasSelection}
