@@ -1,4 +1,9 @@
-import { Compass, Eye, Layers, SlidersHorizontal } from 'lucide-react';
+import { Compass, Eye, Layers, Network, SlidersHorizontal } from 'lucide-react';
+import {
+  LINEAGE_DEPTH_MAX_OPTION,
+  lineageDepthToOption,
+  optionToLineageDepth,
+} from '../graph/lineage';
 
 export interface FilterPanelProps {
   isOpen: boolean;
@@ -6,6 +11,8 @@ export interface FilterPanelProps {
   hasSelection: boolean;
   focusLineageOnly: boolean;
   onToggleFocusLineage: () => void;
+  lineageDepth: number;
+  onLineageDepthChange: (depth: number) => void;
   hideIsolated: boolean;
   onHideIsolatedChange: (value: boolean) => void;
   showUndated: boolean;
@@ -29,6 +36,8 @@ export function FilterPanel({
   hasSelection,
   focusLineageOnly,
   onToggleFocusLineage,
+  lineageDepth,
+  onLineageDepthChange,
   hideIsolated,
   onHideIsolatedChange,
   showUndated,
@@ -81,6 +90,68 @@ export function FilterPanel({
                 {focusLineageOnly ? 'On' : 'Off'}
               </span>
             </button>
+          </div>
+
+          <div className="space-y-2 pt-2 border-t border-slate-800/80">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                <Network size={11} /> Lineage Depth
+              </div>
+              <span
+                className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                  hasSelection
+                    ? 'bg-slate-800 text-fuchsia-300'
+                    : 'bg-slate-950 text-slate-600'
+                }`}
+              >
+                {Number.isFinite(lineageDepth) ? `${lineageDepth} hop${lineageDepth === 1 ? '' : 's'}` : 'All'}
+              </span>
+            </div>
+
+            <input
+              type="range"
+              min={1}
+              max={LINEAGE_DEPTH_MAX_OPTION + 1}
+              step={1}
+              value={lineageDepthToOption(lineageDepth)}
+              disabled={!hasSelection}
+              onChange={(e) => onLineageDepthChange(optionToLineageDepth(Number(e.target.value)))}
+              aria-label="Lineage highlight depth"
+              aria-valuetext={
+                Number.isFinite(lineageDepth)
+                  ? `${lineageDepth} hop${lineageDepth === 1 ? '' : 's'}`
+                  : 'All hops'
+              }
+              className="w-full h-1.5 accent-fuchsia-500 cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
+            />
+
+            <div className="flex justify-between px-0.5 text-[10px] font-medium">
+              {[1, 2, 3, 4].map((option) => (
+                <span
+                  key={option}
+                  className={
+                    lineageDepthToOption(lineageDepth) === option && hasSelection
+                      ? 'text-fuchsia-300'
+                      : 'text-slate-500'
+                  }
+                >
+                  {option}
+                </span>
+              ))}
+              <span
+                className={
+                  lineageDepthToOption(lineageDepth) === LINEAGE_DEPTH_MAX_OPTION + 1 && hasSelection
+                    ? 'text-fuchsia-300'
+                    : 'text-slate-500'
+                }
+              >
+                All
+              </span>
+            </div>
+
+            <p className="text-[10px] leading-relaxed text-slate-500">
+              Hops of roots &amp; successors to spotlight from the selected aesthetic.
+            </p>
           </div>
 
           <div className="space-y-2 pt-1 border-t border-slate-800/80">

@@ -41,6 +41,8 @@ export default function AestheticsTree() {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [focusLineageOnly, setFocusLineageOnly] = useState<boolean>(false);
+  // Spotlight only the direct roots/successors of the selection by default.
+  const [lineageDepth, setLineageDepth] = useState<number>(1);
   const [hideIsolated, setHideIsolated] = useState<boolean>(false);
   const [showUndated, setShowUndated] = useState<boolean>(false);
   const [showSubgenres, setShowSubgenres] = useState<boolean>(true);
@@ -128,10 +130,11 @@ export default function AestheticsTree() {
   // Normalize full graph
   const graph = useMemo(() => normalizeGraphDataset(rawDataset), [rawDataset]);
 
-  // Compute full upstream ancestry, downstream descendants, and lateral peers for selectedId
+  // Compute upstream ancestry, downstream descendants and lateral peers for
+  // selectedId, capped at the user's lineage depth.
   const lineage = useMemo(
-    () => computeLineage(graph.nodeMap, selectedId),
-    [selectedId, graph]
+    () => computeLineage(graph.nodeMap, selectedId, lineageDepth),
+    [selectedId, graph, lineageDepth]
   );
 
   // Filter nodes before layout
@@ -332,6 +335,8 @@ export default function AestheticsTree() {
         hasSelection={Boolean(selectedNode)}
         focusLineageOnly={focusLineageOnly}
         onToggleFocusLineage={() => setFocusLineageOnly((v) => !v)}
+        lineageDepth={lineageDepth}
+        onLineageDepthChange={setLineageDepth}
         hideIsolated={hideIsolated}
         onHideIsolatedChange={setHideIsolated}
         showUndated={showUndated}
