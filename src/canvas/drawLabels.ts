@@ -76,15 +76,10 @@ export function drawDotLabels({
     const labelBottomY = screenY - dotScreenRadius - 5;
     const pillH = screenFontPx + 6;
 
-    // Deterministic char-based truncation keeps labels short without a per-frame measureText call
-    let pillW = (item.node.labelWidth || 70) * (screenFontPx / 12) + 12;
-    let labelText = item.node.label;
-    const maxPillW = Math.min(228, Math.max(120, width * 0.24));
-    if (pillW > maxPillW) {
-      const allowedChars = Math.max(4, Math.floor(labelText.length * (maxPillW / pillW)));
-      labelText = `${labelText.slice(0, Math.max(3, allowedChars - 1))}…`;
-      pillW = maxPillW;
-    }
+    // Pill width comes from the pre-measured label width scaled to the current
+    // screen font size; full titles are never truncated or width-capped.
+    const pillW = Math.max(24, (item.node.labelWidth || 70) * (screenFontPx / 12) + 14);
+    const labelText = item.node.label;
 
     const boxLeft = screenX - pillW / 2;
     const boxRight = screenX + pillW / 2;

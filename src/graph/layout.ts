@@ -268,7 +268,9 @@ export function computeChronologicalLayout(
           const textMaxW = NODE_W - badgeW - 38;
           const thumbTextMaxW = NODE_W - badgeW - 50;
           mCtx.font = '600 12px Inter, system-ui, sans-serif';
-          labelWidth = mCtx.measureText(truncatedLabel).width;
+          // Full (untruncated) label width: sizes the inverse-zoom label pill,
+          // which must never be clipped or width-capped.
+          labelWidth = mCtx.measureText(node.label).width;
 
           if (labelWidth > textMaxW) {
             while (
@@ -278,7 +280,6 @@ export function computeChronologicalLayout(
               truncatedLabel = truncatedLabel.slice(0, -1);
             }
             truncatedLabel = `${truncatedLabel}…`;
-            labelWidth = mCtx.measureText(truncatedLabel).width;
           }
 
           if (mCtx.measureText(truncatedLabelThumb).width > thumbTextMaxW) {

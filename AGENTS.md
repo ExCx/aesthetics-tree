@@ -175,7 +175,7 @@ Everything expensive is computed in `graph/layout.ts`, never per frame:
 - `x`/`y`, swimlane bands, `dotRadius`, degree badge widths, pre-truncated labels (`truncatedLabel`, `truncatedLabelThumb`, `labelWidth`) and `Path2D` edge curves.
 - `measureText` lives only in `graph/layout.ts` (via `getMeasureContext`).
 - `renderScene` and the `draw*` modules must stay free of `measureText` and `shadowBlur`.
-- Dot-mode label truncation is character-based using the pre-measured `labelWidth`.
+- Dot-mode label pills are sized from `labelWidth` (the **full** label, measured once in `layout.ts`) and are never truncated or width-capped. Card labels still use `truncatedLabel` / `truncatedLabelThumb`.
 
 ### 4. Null-safe year handling
 `"year": null` is normal. Preserve every `Number.isFinite` guard in:
