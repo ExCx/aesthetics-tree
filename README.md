@@ -11,12 +11,11 @@ Most aesthetics resources are alphabetical lists. This one answers questions a l
 ## Features
 
 - **Chronological swimlanes** — one lane per decade (Pre-1900 through the 2020s, plus Undated), ordered left to right and colour-coded by era.
-- **PageRank tiers** — the wiki's articles are ranked by graph centrality and split into four tiers (top 2%, next 13%, next 35%, bottom 50%). Important hubs stay visible when zoomed out; niche labels appear as you zoom in.
-- **Lineage spotlighting** — selecting an aesthetic highlights its ancestors, descendants and overlaps, with a depth slider from 1 to 4 hops or unlimited. Only the active lineage is drawn; there are no ambient background edges.
+- **PageRank tiers** — the wiki's articles are ranked by graph centrality and split into four tiers. Important hubs stay visible when zoomed out; niche labels appear as you zoom in.
+- **Lineage spotlighting** — selecting an aesthetic highlights its ancestors, descendants and overlaps, with a depth slider.
 - **Instant fuzzy search** — across titles, motifs, platforms and origins, with a live results dropdown and lineage highlighting for every match.
 - **Inspector drawer** — cover image, the article's lead paragraph (CC BY-SA), key motifs, colours, origin, platforms, year and tier, with a direct link to the wiki page.
 - **Canvas-native rendering** — pan, zoom, hover and thumbnails run on a dirty-flagged `requestAnimationFrame` loop with zero React re-renders during interaction, DPR-aware drawing, spatial-hash hit-testing and detail levels for dots, cards and images.
-- **Bounded camera** — the map cannot be panned into empty space; fit-to-screen and focus-node account for the inspector drawer.
 - **Keyboard shortcuts** — `/` focuses search, `Escape` clears search then selection.
 - **Daily data refresh** — a scheduled GitHub Action re-scrapes the wiki and commits both JSON artifacts; a failed or anomalously small scrape never overwrites live data.
 
@@ -40,8 +39,6 @@ cd aesthetics-tree
 npm ci
 npm run dev
 ```
-
-The app auto-loads `public/aesthetics_data_tiered.json` on mount and fetches `public/aesthetics_summaries.json` after the graph is on screen. There is no sample dataset, upload button or drag-and-drop path: the map is always the committed scraper output.
 
 ### Scripts
 
